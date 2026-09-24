@@ -25,7 +25,10 @@ from pytest_jupyter_deploy.undeployed_project import undeployed_project
 
 
 def pytest_collection_modifyitems(items: list) -> None:
-    """Automatically mark all tests in this directory as e2e tests."""
+    """Automatically mark all tests in this directory as e2e tests.
+
+    The `cli` + `mutating` exclusion is enforced by the plugin's own hook, for every suite at once.
+    """
     for item in items:
         if "e2e" in str(item.fspath):
             item.add_marker(pytest.mark.e2e)
@@ -107,6 +110,39 @@ def gpu_instance_type() -> str:
     if not gpu_instance:
         raise ValueError("JD_E2E_GPU_INSTANCE environment variable must be set")
     return gpu_instance
+
+
+@pytest.fixture(scope="session")
+def base_availability_zone() -> str:
+    """Return the zone the suite deploys into, which the volume tests pin the deployment back to.
+
+    Read from the same env var the suite's variables config expands, so "the base zone" cannot mean
+    two different things in the same run.
+
+    Raises:
+        ValueError: If JD_E2E_AVAILABILITY_ZONE is not set.
+    """
+    base_zone = os.getenv("JD_E2E_AVAILABILITY_ZONE")
+    if not base_zone:
+        raise ValueError("JD_E2E_AVAILABILITY_ZONE environment variable must be set")
+    return base_zone
+
+
+@pytest.fixture(scope="session")
+def alt_availability_zone() -> str:
+    """Return a zone the deployment is NOT in, for the volume-preserving zone swap.
+
+    Must be a zone the default VPC has a subnet in, since the template selects its subnet by zone.
+    Not derived from the current zone by incrementing a letter: not every account has a subnet in
+    every zone, and a swap into a zone with no subnet fails in a way that looks like a template bug.
+
+    Raises:
+        ValueError: If JD_E2E_ALT_AVAILABILITY_ZONE is not set.
+    """
+    alt_zone = os.getenv("JD_E2E_ALT_AVAILABILITY_ZONE")
+    if not alt_zone:
+        raise ValueError("JD_E2E_ALT_AVAILABILITY_ZONE environment variable must be set")
+    return alt_zone
 
 
 @pytest.fixture(scope="session")

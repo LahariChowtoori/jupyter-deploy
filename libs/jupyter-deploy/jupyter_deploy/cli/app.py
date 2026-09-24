@@ -27,6 +27,7 @@ from jupyter_deploy.cli.simple_display import SimpleDisplayManager
 from jupyter_deploy.cli.teams_app import teams_app
 from jupyter_deploy.cli.users_app import users_app
 from jupyter_deploy.cli.variables_decorator import with_project_variables
+from jupyter_deploy.cli.volume_app import volume_app
 from jupyter_deploy.engine.enum import EngineType
 from jupyter_deploy.engine.supervised_execution import DisplayManager
 from jupyter_deploy.engine.vardefs import TemplateVariableDefinition
@@ -77,6 +78,7 @@ class JupyterDeployCliRunner:
         self.app.add_typer(host_app, name="host")
         self.app.add_typer(cluster_app, name="cluster")
         self.app.add_typer(pool_app, name="pool")
+        self.app.add_typer(volume_app, name="volume")
         self.app.add_typer(history_app, name="history")
         self.app.add_typer(projects_app, name="projects")
         self.app.add_typer(proxy_app, name="proxy")
@@ -306,6 +308,13 @@ def config(
         list[str] | None,
         typer.Option("--restore-secret", help="Restore the specific variable secret value."),
     ] = None,
+    restore_volumes: Annotated[
+        bool,
+        typer.Option(
+            "--restore-volumes",
+            help="Recreate storage volumes from their latest backup.",
+        ),
+    ] = False,
     reset_store_id: Annotated[
         bool,
         typer.Option("--reset-store-id", help="Clear the pinned store ID and rediscover the store."),
@@ -420,6 +429,18 @@ def config(
             else:
                 with display_manager.spinner("Restoring secrets..."):
                     handler.restore_secrets(restore_all=restore_secrets, restore_names=restore_secret)
+
+        # Resolve volume backups into the template's backup-ids variable BEFORE the plan, so each volume
+        # is recreated from its backup rather than empty. Reads backups and writes one local variable --
+        # <jd config> stays free of cloud side effects, which is why taking a backup is the separate,
+        # explicit <jd volume backup>.
+        if restore_volumes:
+            if verbose:
+                console.rule("[bold]jupyter-deploy:[/] resolving volume backups")
+                handler.restore_volumes()
+            else:
+                with display_manager.spinner("Resolving volume backups..."):
+                    handler.restore_volumes()
 
         if run_configure:
             if verbose:

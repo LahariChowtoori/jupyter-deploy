@@ -33,11 +33,14 @@ from jupyter_deploy.exceptions import (
     ProxyStartError,
     ReadConfigurationError,
     ReadManifestError,
+    ResourcePollTimeoutError,
     SupervisedExecutionError,
     ToolRequiredError,
     UnreachableHostError,
     UnsupportedProviderRegionError,
     VariableNotFoundError,
+    VolumeNotBackupableError,
+    VolumeNotFoundError,
     WriteConfigurationError,
 )
 
@@ -396,3 +399,86 @@ class TestImageErrors(unittest.TestCase):
         self.assertEqual(error.tag, "v99")
         self.assertIn("v99", str(error))
         self.assertIn("jupyterlab", str(error))
+
+
+class TestResourcePollTimeoutError(unittest.TestCase):
+    """ "Stopped watching", never "failed" -- the provider carries on after this is raised."""
+
+    def test_carries_the_state_and_hint(self) -> None:
+        error = ResourcePollTimeoutError("volume backup", "snap-1", "pending (42% done)", hint="Run 'jd volume show'.")
+        self.assertEqual(error.resource_kind, "volume backup")
+        self.assertEqual(error.resource_name, "snap-1")
+        self.assertEqual(error.state, "pending (42% done)")
+        self.assertIn("snap-1", str(error))
+        self.assertIn("pending", str(error))
+
+    def test_says_it_stopped_waiting_rather_than_failed(self) -> None:
+        """Wording matters: a timeout on a backup reads as data loss unless it says otherwise.
+
+        The generic message stops at "stopped waiting"; the reassurance that the operation continues is
+        the raise site's, since only it knows what carries on and what the user can check.
+        """
+        message = str(ResourcePollTimeoutError("volume backup", "snap-1", "pending"))
+        self.assertIn("Stopped waiting", message)
+        self.assertNotIn("failed", message)
+
+    def test_is_catchable_as_both_jupyter_deploy_and_timeout(self) -> None:
+        """JupyterDeployError so the CLI renders it; TimeoutError so existing callers still catch it."""
+        error = ResourcePollTimeoutError("volume backup", "snap-1", "pending")
+        self.assertIsInstance(error, JupyterDeployError)
+        self.assertIsInstance(error, TimeoutError)
+
+
+class TestVolumeErrors(unittest.TestCase):
+    """Test cases for volume-related exceptions."""
+
+    def test_volume_not_found_error(self) -> None:
+        error = VolumeNotFoundError("scratch", ["home", "home/external-ebs1"])
+        self.assertIsInstance(error, JupyterDeployError)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(error.volume_name, "scratch")
+        self.assertEqual(error.valid_volumes, ["home", "home/external-ebs1"])
+        self.assertIn("scratch", str(error))
+
+    def test_volume_not_found_is_not_an_instruction_error(self) -> None:
+        """A handler-layer error, so the CLI can list the valid names.
+
+        `ResourceNotFoundError` is the provider-layer sibling: it means an API could not find a
+        resource and carries no list of alternatives, so the two must not be interchangeable.
+        """
+        self.assertNotIsInstance(VolumeNotFoundError("scratch", []), InstructionError)
+
+    def test_volume_not_backupable_error(self) -> None:
+        error = VolumeNotBackupableError(
+            "home/shared",
+            "the template declares no backup mechanism for 'efs' storage",
+            volume_class="efs",
+            hint="Run 'jd volume backup --all'.",
+        )
+        self.assertIsInstance(error, JupyterDeployError)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(error.volume_name, "home/shared")
+        self.assertEqual(error.volume_class, "efs")
+        self.assertEqual(error.reason, "the template declares no backup mechanism for 'efs' storage")
+        self.assertEqual(error.hint, "Run 'jd volume backup --all'.")
+        self.assertIn("home/shared", str(error))
+        self.assertIn("no backup mechanism", str(error))
+
+    def test_volume_not_backupable_error_is_not_a_host_state_error(self) -> None:
+        """Deliberately NOT IncompatibleHostStateError: nothing about the host is wrong.
+
+        No retry, permission grant, or state change makes the answer different, so a caller that
+        caught the host-state error to offer "stop the host and try again" must not catch this.
+        """
+        error = VolumeNotBackupableError("vol-ref", "this deployment only references it")
+        self.assertNotIsInstance(error, IncompatibleHostStateError)
+
+    def test_volume_not_backupable_error_optional_fields_default(self) -> None:
+        error = VolumeNotBackupableError("vol-ref", "this deployment only references it")
+        self.assertEqual(error.volume_class, "")
+        self.assertIsNone(error.hint)
+
+    def test_volume_not_backupable_error_message_ends_with_a_period(self) -> None:
+        """The reason is a clause, not a sentence; the exception composes the sentence."""
+        error = VolumeNotBackupableError("home", "some reason")
+        self.assertEqual(str(error), "Volume 'home' cannot be backed up: some reason.")

@@ -6,12 +6,15 @@ The pytest-jupyter-deploy plugin provides these fixtures automatically:
 - github_oauth_app: GitHub OAuth2 Proxy authentication helper
 """
 
+import contextlib
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest_jupyter_deploy.deployment import EndToEndDeployment
 from pytest_jupyter_deploy.plugin import handle_browser_context_args
 
 
@@ -210,19 +213,6 @@ def larger_log_retention_days() -> int:
 
 
 @pytest.fixture(scope="session")
-def cpu_instance_type() -> str:
-    """Returns a CPU instance type for instance swap tests.
-
-    Raises:
-        ValueError: If JD_E2E_CPU_INSTANCE is not set
-    """
-    cpu_instance = os.getenv("JD_E2E_CPU_INSTANCE")
-    if not cpu_instance:
-        raise ValueError("JD_E2E_CPU_INSTANCE environment variable must be set")
-    return cpu_instance
-
-
-@pytest.fixture(scope="session")
 def gpu_instance_type() -> str:
     """Returns a GPU instance type for GPU deployment tests.
 
@@ -233,3 +223,71 @@ def gpu_instance_type() -> str:
     if not gpu_instance:
         raise ValueError("JD_E2E_GPU_INSTANCE environment variable must be set")
     return gpu_instance
+
+
+@pytest.fixture(scope="session")
+def base_availability_zone() -> str:
+    """Return the zone the suite deploys into, which the volume tests pin the deployment back to.
+
+    Read from the same env var the suite's variables config expands, so "the base zone" cannot mean
+    two different things in the same run.
+
+    Raises:
+        ValueError: If JD_E2E_AVAILABILITY_ZONE is not set
+    """
+    base_zone = os.getenv("JD_E2E_AVAILABILITY_ZONE")
+    if not base_zone:
+        raise ValueError("JD_E2E_AVAILABILITY_ZONE environment variable must be set")
+    return base_zone
+
+
+@pytest.fixture(scope="session")
+def alt_availability_zone() -> str:
+    """Return a zone the deployment is NOT in, for the volume-preserving zone swap.
+
+    Must be a zone the default VPC has a subnet in, since the template selects its subnet by zone.
+    Not derived from the current zone by incrementing a letter: not every account has a subnet in
+    every zone, and a swap into a zone with no subnet fails in a way that looks like a template bug.
+
+    Raises:
+        ValueError: If JD_E2E_ALT_AVAILABILITY_ZONE is not set
+    """
+    alt_zone = os.getenv("JD_E2E_ALT_AVAILABILITY_ZONE")
+    if not alt_zone:
+        raise ValueError("JD_E2E_ALT_AVAILABILITY_ZONE environment variable must be set")
+    return alt_zone
+
+
+# --------------------------------------------------------------------------- allowlist safety net
+
+
+@pytest.fixture(scope="module")
+def restore_allowlist(e2e_deployment: EndToEndDeployment, logged_user: str) -> Iterator[None]:
+    """Put the allowlist back to the deployment's baseline on teardown: the logged user, nothing else.
+
+    Mandatory, not optional, for any module that edits the allowlist through the variables: a
+    failure between a grant and its revoke would leave a probe entry in place and change what every
+    later access test is asserting against. Recovery runs over SSM, which is independent of the
+    OAuth path, so it works even if the app itself is unreachable.
+
+    Restores to a BASELINE rather than to a snapshot of whatever was there. Same convention as every
+    other module in this suite, which declares the allowlist it needs at setup (`ensure_authorized`)
+    instead of inheriting one — and it costs two SSM round-trips instead of six.
+
+    Users are restored first because update-auth.sh refuses an operation that would leave nobody
+    authorized at all -- `organization unset` on an empty user list is exactly that.
+
+    Touches the file on the instance only. The terraform variables are deliberately left as the test
+    left them: rewriting them would mean a `jd config` + `jd up` in fixture teardown, and a failure
+    there would be reported against whichever test happened to be last.
+    """
+    e2e_deployment.ensure_deployed()
+    try:
+        yield
+    finally:
+        # Suppressed as a whole: a teardown that fails because the deployment is broken must not
+        # replace the real test failure with its own.
+        with contextlib.suppress(Exception):
+            e2e_deployment.ensure_authorized([logged_user], "", [])
+            # ensure_authorized no-ops on empty args, so the probe team needs an explicit clear.
+            e2e_deployment.ensure_no_org_nor_teams_allowlisted()

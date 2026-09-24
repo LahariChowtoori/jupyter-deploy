@@ -155,7 +155,7 @@ On first visit, Traefik forwards the request to OAuth2 Proxy, which redirects th
 
 ### Networking
 
-The template places the EC2 instance in the first subnet of the default VPC in the selected AWS region. The template assigns an Elastic IP (EIP) to the instance to keep its public IP address stable across stop/start cycles.
+The template places the EC2 instance in the first subnet of the default VPC in the selected AWS region, or optionally in the subnet mapping to the zone you select with the `availability_zone` variable. The template assigns an Elastic IP (EIP) to the instance to keep its public IP address stable across stop/start cycles.
 
 Amazon Route 53 manages DNS. The template references a Hosted Zone for your domain (which must already exist) and adds a DNS record pointing your subdomain to the instance's Elastic IP.
 
@@ -174,6 +174,8 @@ You can also provide a specific AMI ID to override automatic selection.
 The instance has two volumes. The root volume inherits its size and settings from the selected AMI, with a configurable minimum size. It persists across instance restarts and instance type changes, as long as the new instance type is compatible with the existing root volume. The template attaches a separate EBS data volume and mounts it into the **JupyterLab** container at `/home/jovyan` — this volume persists user data across container restarts and instance stop/start cycles.
 
 You can optionally attach additional EBS volumes or EFS file systems and mount them into the Jupyter home directory.
+
+EBS volumes cannot cross availability zones, so changing `availability_zone` on a live deployment replaces them. Back them up with `jd volume backup` and restore them with `jd config --restore-volumes` first — see the `AGENT.md` in your project directory for the full sequence. EFS file systems are regional and need none of this.
 
 ### TLS
 
@@ -289,6 +291,7 @@ The template provides two variable presets:
 | [aws_s3_bucket_public_access_block](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
 | [aws_s3_object](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_object) | resource |
 | [aws_subnets](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnets) | data source |
+| [aws_ec2_instance_type_offerings](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ec2_instance_type_offerings) | data source |
 | [aws_subnet](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnet) | data source |
 | [aws_ami](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ami) | data source |
 | [aws_route53_zone](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/route53_zone) | data source |
@@ -302,9 +305,11 @@ The template provides two variable presets:
 | Name | Type | Default | Description |
 |---|---|---|---|
 | region | `string` | `us-west-2` | The AWS region where to create the resources |
+| jupyter_package_manager | `string` | `uv` | The package manager for the Jupyter environment (`uv` or `pixi`) |
 | instance_type | `string` | `t3.medium` | The type of instance to start |
 | key_pair_name | `string` | `null` | The name of key pair |
 | ami_id | `string` | `null` | The ID of the AMI to use for the instance |
+| availability_zone | `string` | `any` | The availability zone for the instance and its EBS volumes; `any` uses the first subnet of the VPC |
 | min_root_volume_size_gb | `number` | `30` | The minimum size in gigabytes of the root EBS volume for the EC2 instance (will use AMI snapshot size if larger) |
 | volume_size_gb | `number` | `30` | The size in GB of the EBS volume the Jupyter Server has access to |
 | volume_type | `string` | `gp3` | The type of EBS volume the Jupyter Server will has access to |
@@ -327,12 +332,13 @@ The template provides two variable presets:
 | custom_tags | `map(string)` | `{}` | The custom tags to add to all the resources |
 | additional_ebs_mounts | `list(map(string))` | `[]` | Elastic block stores to mount on the notebook home directory |
 | additional_efs_mounts | `list(map(string))` | `[]` | Elastic file systems to mount on the notebook home directory |
+| ebs_snapshot_ids | `map(string)` | `{}` | Map of volume name to the EBS snapshot to create it from; written by `jd config --restore-volumes` |
 
 ## Outputs
 | Name | Description |
 |---|---|
 | `jupyter_url` | The URL to access your notebook app |
-| `auth_url` | The URL for the OAuth callback - do not use directly |
+| `auth_callback_url` | The URL for the OAuth callback - do not use directly |
 | `instance_id` | The ID of the EC2 instance |
 | `ami_id` | The Amazon Machine Image ID used by the EC2 instance |
 | `jupyter_server_public_ip` | The public IP assigned to the EC2 instance |
@@ -349,13 +355,16 @@ The template provides two variable presets:
 | `server_logs_document` | Name of the SSM document to print server logs to terminal |
 | `server_exec_document` | Name of the SSM document to execute commands inside server containers |
 | `server_connect_document` | Name of the SSM document to start interactive shell sessions inside server containers (jupyter or traefik) |
-| `auth_org_unset_document` | Name of the SSM document to remove the allowlisted organization |
 | `auth_check_document` | Name of the SSM document to view authorized users, teams and organization |
 | `auth_users_update_document` | Name of the SSM document to change the authorized users |
 | `auth_teams_update_document` | Name of the SSM document to change the authorized teams |
 | `auth_org_set_document` | Name of the SSM document to allowlist an organization |
 | `auth_org_unset_document` | Name of the SSM document to remove the allowlisted organization |
 | `persisting_resources` | List of identifiers of resources that should not be destroyed |
+| `availability_zone` | The availability zone the instance and its EBS volumes are placed in |
+| `jupyter_data_volume_id` | The ID of the EBS volume mounted on the notebook home directory |
+| `additional_ebs_volumes` | JSON-encoded inventory of the configured additional EBS mounts, consumed by `jd volume` |
+| `additional_efs_volumes` | JSON-encoded inventory of the configured additional EFS mounts, consumed by `jd volume` |
 
 ## License
 

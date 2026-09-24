@@ -26,7 +26,7 @@ resource "random_id" "postfix" {
 
 locals {
   template_name    = "tf-aws-ec2-jupyterlab"
-  template_version = "0.1.0rc2"
+  template_version = "0.1.0"
 
   default_tags = {
     Source       = "jupyter-deploy"
@@ -106,6 +106,7 @@ module "volumes" {
   volume_type           = var.volume_type
   additional_ebs_mounts = var.additional_ebs_mounts
   additional_efs_mounts = var.additional_efs_mounts
+  ebs_snapshot_ids      = var.ebs_snapshot_ids
   availability_zone     = module.ec2_instance.availability_zone
   subnet_id             = module.ec2_instance.subnet_id
   instance_id           = module.ec2_instance.id

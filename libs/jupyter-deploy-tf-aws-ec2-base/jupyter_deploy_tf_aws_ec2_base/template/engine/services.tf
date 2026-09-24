@@ -123,10 +123,26 @@ locals {
   allowed_github_usernames = var.oauth_allowed_usernames != null ? join(",", [for username in var.oauth_allowed_usernames : "${username}"]) : ""
   allowed_github_org       = var.oauth_allowed_org != null ? var.oauth_allowed_org : ""
   allowed_github_teams     = var.oauth_allowed_teams != null ? join(",", [for team in var.oauth_allowed_teams : "${team}"]) : ""
+  # The file layout update-auth.sh and docker-startup.sh both parse: three [section] headers, one
+  # comma-separated value line each. Built here so the SSM parameter that seeds the instance and the
+  # on-instance file that the runtime commands edit have exactly one definition of the format.
+  auth_allowlist_content = join("\n", [
+    "[org]",
+    local.allowed_github_org,
+    "",
+    "[teams]",
+    local.allowed_github_teams,
+    "",
+    "[users]",
+    local.allowed_github_usernames,
+  ])
+
+  # Deliberately does NOT interpolate the allowlist: see the long note in cloudinit.sh.tftpl. Keeping
+  # this script's text independent of the allowlist values is the whole mechanism by which an
+  # allowlist-only `jd up` stops re-running the boot path.
   cloud_init_file = templatefile("${path.module}/../services/cloudinit.sh.tftpl", {
-    allowed_github_usernames = local.allowed_github_usernames
-    allowed_github_org       = local.allowed_github_org
-    allowed_github_teams     = local.allowed_github_teams
+    aws_region                    = data.aws_region.current.id
+    auth_allowlist_parameter_name = aws_ssm_parameter.auth_allowlist.name
   })
   docker_startup_file = templatefile("${path.module}/../services/docker-startup.sh.tftpl", {
     oauth_secret_arn = module.secret.secret_arn,
@@ -139,17 +155,17 @@ locals {
     certs_secret_arn = module.certs_secret.secret_arn,
   })
   docker_compose_file = templatefile("${path.module}/../services/docker-compose.yml.tftpl", {
-    oauth_provider           = var.oauth_provider
-    full_domain              = module.network.full_domain
-    github_client_id         = var.oauth_app_client_id
-    aws_region               = data.aws_region.current.id
-    allowed_github_usernames = local.allowed_github_usernames
-    allowed_github_org       = local.allowed_github_org
-    allowed_github_teams     = local.allowed_github_teams
-    ebs_mounts               = module.volumes.resolved_ebs_mounts
-    efs_mounts               = module.volumes.resolved_efs_mounts
-    has_gpu                  = module.ami_al2023.has_gpu
-    has_neuron               = module.ami_al2023.has_neuron
+    oauth_provider   = var.oauth_provider
+    full_domain      = module.network.full_domain
+    github_client_id = var.oauth_app_client_id
+    aws_region       = data.aws_region.current.id
+    # No allowlist values here on purpose: the compose file reads them from /opt/docker/.env as
+    # $${AUTHED_*_CONTENT}, which docker-startup.sh writes from /etc/AUTHED_ENTITIES at boot. Passing
+    # them in would put the allowlist back into a hashed file for no benefit.
+    ebs_mounts = module.volumes.resolved_ebs_mounts
+    efs_mounts = module.volumes.resolved_efs_mounts
+    has_gpu    = module.ami_al2023.has_gpu
+    has_neuron = module.ami_al2023.has_neuron
   })
   traefik_config_file = templatefile("${path.module}/../services/traefik/traefik.yml.tftpl", {
     letsencrypt_notification_email = var.letsencrypt_email
@@ -494,6 +510,121 @@ resource "aws_ssm_document" "instance_startup" {
   }
 }
 
+# The access allowlist, held out of band so that changing it does not change the startup document.
+#
+# A plain String, not a SecureString: these are GitHub org / team / user names, which are public
+# identifiers and are already visible in variables.yaml, the terraform state and `jd users list`.
+# Encrypting them would add a KMS grant to the instance role for no confidentiality gain.
+#
+# This is a SEED, not the source of truth. The instance reads it once, on first boot; after that
+# /etc/AUTHED_ENTITIES on the instance is authoritative and null_resource.reconcile_auth_allowlist
+# below is what propagates later variable edits into it.
+resource "aws_ssm_parameter" "auth_allowlist" {
+  name  = "/jupyter-deploy/${local.doc_postfix}/authed-entities"
+  type  = "String"
+  value = local.auth_allowlist_content
+  tags  = local.combined_tags
+
+  # No precondition here that the allowlist is non-empty: `local.github_auth_valid` on
+  # aws_ssm_document.instance_startup below already refuses such a plan, and asserting the same rule
+  # twice just means two error messages to keep in step.
+}
+
+# Reconcile the running allowlist with the variables, recreating ONLY the auth container.
+#
+# This is the resource that makes an allowlist edit cheap. The values live in `triggers`, so terraform
+# re-runs the provisioner exactly when one of them changes -- and because they appear nowhere in the
+# startup document any more, nothing else about the instance is touched: no association replacement, no
+# `docker compose up --force-recreate`, no kernel deaths.
+#
+# `set` rather than `add`, for all three sections, so the variables are authoritative: removing a name
+# from a variable revokes it, which `add` would not do. That also makes a no-change `jd up` a no-op --
+# update-auth.sh only recreates the auth container when the file actually changed.
+resource "null_resource" "reconcile_auth_allowlist" {
+  triggers = {
+    org      = local.allowed_github_org
+    teams    = local.allowed_github_teams
+    users    = local.allowed_github_usernames
+    instance = module.ec2_instance.id
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-DOC
+      set -euo pipefail
+
+      run_auth_update() {
+        # Sends one update-auth.sh invocation over SSM and waits for it, so a failure fails the apply
+        # rather than leaving the allowlist half-applied and the run green.
+        local description="$1"
+        shift
+        local command_id
+        command_id=$(aws ssm send-command \
+          --region "${data.aws_region.current.id}" \
+          --instance-ids "${module.ec2_instance.id}" \
+          --document-name "AWS-RunShellScript" \
+          --comment "jupyter-deploy: reconcile access allowlist" \
+          --parameters "commands=[\"$*\"]" \
+          --query 'Command.CommandId' \
+          --output text)
+
+        if ! aws ssm wait command-executed \
+          --region "${data.aws_region.current.id}" \
+          --command-id "$command_id" \
+          --instance-id "${module.ec2_instance.id}" 2>/dev/null; then
+          echo "ERROR: failed to $description on the instance." >&2
+          aws ssm get-command-invocation \
+            --region "${data.aws_region.current.id}" \
+            --command-id "$command_id" \
+            --instance-id "${module.ec2_instance.id}" \
+            --query '[Status,StandardErrorContent]' --output text >&2 || true
+          exit 1
+        fi
+        echo "Reconciled $description."
+      }
+
+      # GRANTS BEFORE REVOKES, which is why the section order differs by branch rather than being
+      # shared. update-auth.sh refuses any single operation that would leave the file with no users
+      # AND no org (oauth2-proxy reads empty allowlists as "no restriction"), and it judges that on
+      # the file as it stands, not on the end state terraform is driving towards. So whichever
+      # section is being emptied has to go LAST, after the one that is being filled:
+      #
+      #   org set   -> org, teams, users   (a trailing empty `users set` is fine: the org is in place)
+      #   org clear -> users, teams, org   (`users` is non-empty here, guaranteed by
+      #                                     local.github_auth_valid, so clearing the org is safe)
+      #
+      # Ordering them the same way in both branches fails one direction or the other: org-first
+      # breaks org-only -> users-only, users-first breaks users-only -> org-only.
+      #
+      # `org` takes a bare name rather than an action: `org <name>` to set, `org remove` to clear.
+      #
+      # `set` with an empty list is how a cleared variable is expressed: the caller knows the list the
+      # section should end up with, never the names currently in it, so it cannot phrase this as a
+      # `remove`. update-auth.sh accepts that form for exactly this path.
+      #
+      # Either order leaves the allowlist briefly holding the UNION of the old and new values, since
+      # the sections are three separate writes. Not avoidable without an atomic multi-section update,
+      # and it only widens access for the seconds between two SSM round-trips.
+      %{if local.allowed_github_org != ""~}
+      run_auth_update "the allowlisted organization" "sh /usr/local/bin/update-auth.sh org ${local.allowed_github_org}"
+      run_auth_update "the allowlisted teams" "sh /usr/local/bin/update-auth.sh teams set ${local.allowed_github_teams}"
+      run_auth_update "the allowlisted users" "sh /usr/local/bin/update-auth.sh users set ${local.allowed_github_usernames}"
+      %{else~}
+      run_auth_update "the allowlisted users" "sh /usr/local/bin/update-auth.sh users set ${local.allowed_github_usernames}"
+      run_auth_update "the allowlisted teams" "sh /usr/local/bin/update-auth.sh teams set ${local.allowed_github_teams}"
+      run_auth_update "the allowlisted organization (cleared)" "sh /usr/local/bin/update-auth.sh org remove"
+      %{endif~}
+    DOC
+  }
+
+  # After the readiness wait, not just after the association: update-auth.sh and get-auth.sh only exist
+  # on the instance once the startup document has copied them to /usr/local/bin, and the auth container
+  # it recreates must already be running.
+  depends_on = [
+    null_resource.wait_for_instance_ready,
+  ]
+}
+
 # Trigger for forcing SSM association re-execution when scripts change or instance type changes
 resource "terraform_data" "scripts_files_trigger" {
   input = {
@@ -524,6 +655,20 @@ resource "aws_ssm_association" "instance_startup_with_secret" {
   depends_on = [
     module.secret,
     module.ec2_instance,
-    module.volumes
+    module.volumes,
+    # The startup document runs `aws s3 cp s3://<bucket>/deployment-{scripts,docker}/...` on the
+    # instance. Terraform only infers a dependency on the bucket NAME, not on each aws_s3_object
+    # finishing its upload, so without this the association can fire before the bundle is complete
+    # and the instance's `aws s3 cp` 404s. No cycle: module.s3_bucket depends on volumes and
+    # ec2_instance, both of which this association already awaits.
+    module.s3_bucket,
+    # Same class of race on the instance role's permissions rather than on the payload: the startup
+    # document reads the allowlist parameter, downloads the S3 bundle and reads the certs secret, all as
+    # the instance profile. These attachments are top-level resources rather than part of a module, so
+    # nothing in the graph otherwise orders them before the association fires -- the boot just happens to
+    # win today because document delivery is slow.
+    aws_iam_role_policy_attachment.auth_allowlist_ssm_access,
+    aws_iam_role_policy_attachment.deployment_bucket_s3_access,
+    aws_iam_role_policy_attachment.certs_secret_access,
   ]
 }

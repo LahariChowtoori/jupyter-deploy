@@ -7,6 +7,7 @@ from jupyter_deploy.cli.app import runner as app_runner
 from jupyter_deploy.cli.simple_display import SimpleDisplayManager
 from jupyter_deploy.enum import StoreType
 from jupyter_deploy.exceptions import (
+    BackupsNotReadyError,
     InvalidPresetError,
     LogCleanupError,
     SecretNotFoundError,
@@ -588,3 +589,108 @@ class TestConfigCommand(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0)
         mock_config_fns["reset_variables"].assert_called_once_with(["domain", "custom_tags"])
+
+
+class TestConfigRestoreVolumes(unittest.TestCase):
+    """`--restore-volumes` is opt-in, and it runs BEFORE the plan.
+
+    Ordering is the point of these tests rather than an implementation detail: the flag resolves each
+    volume's backup into a template variable, and the plan has to be generated from the map that resolve
+    produced. Resolving after `configure()` would write the ids into a plan that had already been made
+    without them, so `jd up` would replace the volumes EMPTY while `jd config` reported success.
+    """
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    @staticmethod
+    def _handler() -> Mock:
+        handler = Mock()
+        handler.has_recorded_variables.return_value = False
+        handler.verify_preset_exists.return_value = True
+        handler.list_presets.return_value = ["all", "base", "none"]
+        handler.verify_requirements.return_value = True
+        handler.ensure_store.return_value = None
+        handler.configure.return_value = None
+        handler.has_used_preset.return_value = False
+        return handler
+
+    @patch("jupyter_deploy.handlers.project.config_handler.ConfigHandler")
+    def test_the_flag_resolves_the_backups_and_the_config_proceeds(self, mock_config_handler: Mock) -> None:
+        handler = self._handler()
+        mock_config_handler.return_value = handler
+
+        result = self.runner.invoke(app_runner.app, ["config", "--restore-volumes"])
+
+        self.assertEqual(result.exit_code, 0)
+        handler.restore_volumes.assert_called_once_with()
+        handler.configure.assert_called_once()
+
+    @patch("jupyter_deploy.handlers.project.config_handler.ConfigHandler")
+    def test_the_resolve_happens_before_the_plan(self, mock_config_handler: Mock) -> None:
+        """A plan generated before the ids are written would apply the OLD map -- or none at all."""
+        handler = self._handler()
+        calls: list[str] = []
+        handler.restore_volumes.side_effect = lambda: calls.append("restore")
+        handler.configure.side_effect = lambda **_: calls.append("configure")
+        mock_config_handler.return_value = handler
+
+        result = self.runner.invoke(app_runner.app, ["config", "--restore-volumes"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(calls, ["restore", "configure"])
+
+    @patch("jupyter_deploy.handlers.project.config_handler.ConfigHandler")
+    def test_without_the_flag_nothing_is_resolved(self, mock_config_handler: Mock) -> None:
+        """Opt-in, because resolving REPLACES every volume on the next apply.
+
+        `snapshot_id` is ForceNew, so a `jd config` that quietly repointed the map would rebuild healthy
+        volumes from their last backup and discard everything written since.
+        """
+        handler = self._handler()
+        mock_config_handler.return_value = handler
+
+        result = self.runner.invoke(app_runner.app, ["config"])
+
+        self.assertEqual(result.exit_code, 0)
+        handler.restore_volumes.assert_not_called()
+        handler.configure.assert_called_once()
+
+    @patch("jupyter_deploy.handlers.project.config_handler.ConfigHandler")
+    def test_verbose_takes_the_same_path(self, mock_config_handler: Mock) -> None:
+        """The verbose branch is a separate call site, so it can drift from the spinner branch."""
+        handler = self._handler()
+        mock_config_handler.return_value = handler
+
+        result = self.runner.invoke(app_runner.app, ["config", "--restore-volumes", "--verbose"])
+
+        self.assertEqual(result.exit_code, 0)
+        handler.restore_volumes.assert_called_once_with()
+
+
+class TestConfigRestoreVolumesRefusal(unittest.TestCase):
+    """`--restore-volumes` refuses when the backups cannot be shown to hold the data.
+
+    Covered at the CLI level because the REMEDY is what makes the refusal useful, and the remedy lives in
+    the exception's hint -- which only the error decorator renders. A live run caught exactly this gap:
+    the message printed, the hint did not, and the user was told they could not proceed without being
+    told what to do about it.
+    """
+
+    @patch("jupyter_deploy.handlers.project.config_handler.ConfigHandler")
+    def test_the_reason_and_the_hint_both_reach_the_user(self, mock_config_handler: Mock) -> None:
+        handler = Mock()
+        handler.has_recorded_variables.return_value = True
+        handler.restore_volumes.side_effect = BackupsNotReadyError(
+            "the backup of home was taken before the app last shut down",
+            volume_names=["home"],
+            hint="Run 'jd volume backup --all' to capture the current contents, then retry.",
+        )
+        mock_config_handler.return_value = handler
+
+        result = CliRunner().invoke(app_runner.app, ["config", "--restore-volumes"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("not ready to restore from", result.output)
+        self.assertIn("jd volume backup --all", result.output)
+        self.assertNotIn("Traceback", result.output)

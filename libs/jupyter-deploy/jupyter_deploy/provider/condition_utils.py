@@ -67,6 +67,26 @@ def _evaluate_in(
     return left.value in right.value
 
 
+def _evaluate_equals(
+    left: ResolvedInstructionArgument,
+    right: ResolvedInstructionArgument,
+) -> bool:
+    """Evaluate `left == right`, requiring both operands to be str.
+
+    Fails loud on any other shape rather than comparing across types: two operands of different
+    types are never equal, so a silent False would read as a legitimate branch decision.
+    """
+    if not isinstance(left, StrResolvedInstructionArgument):
+        raise InvalidInstructionArgumentError(
+            f"'equals' condition requires a str left operand, got {type(left).__name__}"
+        )
+    if not isinstance(right, StrResolvedInstructionArgument):
+        raise InvalidInstructionArgumentError(
+            f"'equals' condition requires a str right operand, got {type(right).__name__}"
+        )
+    return left.value == right.value
+
+
 def evaluate_flag(
     flag: JupyterDeployFlagV1,
     output_defs: dict[str, TemplateOutputDefinition],
@@ -81,6 +101,9 @@ def evaluate_flag(
 
         if operator == ConditionOperator.IN:
             if not _evaluate_in(left, right):
+                return False
+        elif operator == ConditionOperator.EQUALS:
+            if not _evaluate_equals(left, right):
                 return False
         else:
             raise InvalidInstructionArgumentError(f"Unsupported condition operator: {operator}")

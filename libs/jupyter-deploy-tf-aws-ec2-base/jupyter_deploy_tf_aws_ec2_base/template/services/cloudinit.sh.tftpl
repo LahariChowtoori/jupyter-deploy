@@ -158,15 +158,32 @@ mkdir -p /var/log/services
 # Create the AUTHED_ENTITIES file only on first boot.
 # Runtime changes (jd users/organization/teams commands) modify this file
 # directly via update-auth.sh and must survive host restarts.
+#
+# The allowlist is FETCHED from SSM Parameter Store rather than interpolated into this script, even
+# though terraform knows the values here. Interpolating them makes them part of this script's text,
+# which is part of the startup document, which is hashed into the association's replace trigger --
+# so editing an allowlist variable and running `jd up` would replace the association and re-run the
+# whole boot path, including `docker compose up --force-recreate`. That kills every kernel and drops
+# every session to change a list of names. Reading the value out of band keeps this script byte-identical
+# across allowlist edits, so `jd up` reconciles the running allowlist through the auth container alone
+# (see null_resource.reconcile_auth_allowlist in engine/services.tf).
+#
+# Still first-boot-guarded: on a restart the on-instance file is authoritative, because a
+# `jd users add` between two applies has updated the file and the terraform variable but not yet this
+# parameter. Seeding from the parameter on every boot would silently revert that change.
 if [ ! -f /etc/AUTHED_ENTITIES ]; then
-    echo "[org]" > /etc/AUTHED_ENTITIES
-    echo "${allowed_github_org}" >> /etc/AUTHED_ENTITIES
-    echo "" >> /etc/AUTHED_ENTITIES
-    echo "[teams]" >> /etc/AUTHED_ENTITIES
-    echo "${allowed_github_teams}" >> /etc/AUTHED_ENTITIES
-    echo "" >> /etc/AUTHED_ENTITIES
-    echo "[users]" >> /etc/AUTHED_ENTITIES
-    echo "${allowed_github_usernames}" >> /etc/AUTHED_ENTITIES
+    # Fail the boot rather than come up with an empty allowlist: docker-startup.sh refuses to start the
+    # stack without at least one allowlisted entity, so an unreadable parameter must surface as itself
+    # rather than as a confusing downstream "No authentication restrictions found".
+    if ! ALLOWLIST=$(aws ssm get-parameter \
+        --region ${aws_region} \
+        --name ${auth_allowlist_parameter_name} \
+        --query Parameter.Value \
+        --output text); then
+        echo "ERROR: could not read the access allowlist from SSM parameter ${auth_allowlist_parameter_name}"
+        exit 1
+    fi
+    printf '%s\n' "$ALLOWLIST" > /etc/AUTHED_ENTITIES
     chmod 600 /etc/AUTHED_ENTITIES
     chown service-user:service-user /etc/AUTHED_ENTITIES
 fi

@@ -1,4 +1,5 @@
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import Mock, call, patch
 
 import botocore.exceptions
@@ -10,10 +11,13 @@ from jupyter_deploy.api.aws.ec2.ec2_instance import (
     Ec2InstanceState,
     describe_instance_public_ip,
     describe_instance_status,
+    get_instance_stop_time,
     poll_for_instance_status,
     restart_instance,
     start_instance,
     stop_instance,
+    verify_instance_stopped,
+    verify_instance_stopped_since,
 )
 from jupyter_deploy.engine.supervised_execution import NullDisplay
 from jupyter_deploy.exceptions import IncompatibleHostStateError, ResourceNotFoundError
@@ -446,6 +450,60 @@ class TestStopInstance(unittest.TestCase):
             stop_instance(mock_ec2_client, "i-123")
 
 
+class TestVerifyInstanceStopped(unittest.TestCase):
+    """The gate for operations that need a quiesced disk, above all taking a volume backup."""
+
+    @staticmethod
+    def _client_in_state(state_name: str, code: int) -> Mock:
+        mock_ec2_client = Mock()
+        mock_ec2_client.describe_instances.return_value = {
+            "Reservations": [{"Instances": [{"State": {"Name": state_name, "Code": code}}]}]
+        }
+        return mock_ec2_client
+
+    def test_returns_the_state_when_stopped(self) -> None:
+        mock_ec2_client = self._client_in_state("stopped", 80)
+
+        self.assertEqual(verify_instance_stopped(mock_ec2_client, "i-123"), Ec2InstanceState.STOPPED)
+
+    def test_raises_when_running(self) -> None:
+        mock_ec2_client = self._client_in_state("running", 16)
+
+        with self.assertRaises(IncompatibleHostStateError) as ctx:
+            verify_instance_stopped(mock_ec2_client, "i-123")
+
+        self.assertIn("running", str(ctx.exception))
+        self.assertIn("jd host stop", str(ctx.exception.hint))
+
+    def test_raises_while_still_stopping(self) -> None:
+        """`stopping` is not good enough: the flush has begun but has not finished."""
+        mock_ec2_client = self._client_in_state("stopping", 64)
+
+        with self.assertRaises(IncompatibleHostStateError):
+            verify_instance_stopped(mock_ec2_client, "i-123")
+
+    def test_raises_when_pending(self) -> None:
+        mock_ec2_client = self._client_in_state("pending", 0)
+
+        with self.assertRaises(IncompatibleHostStateError):
+            verify_instance_stopped(mock_ec2_client, "i-123")
+
+    def test_skips_describe_instance_status(self) -> None:
+        """DescribeInstanceStatus only surfaces RUNNING instances, so a stopped host would look absent."""
+        mock_ec2_client = self._client_in_state("stopped", 80)
+
+        verify_instance_stopped(mock_ec2_client, "i-123")
+
+        mock_ec2_client.describe_instance_status.assert_not_called()
+
+    def test_raises_when_the_instance_is_gone(self) -> None:
+        mock_ec2_client = Mock()
+        mock_ec2_client.describe_instances.return_value = {"Reservations": []}
+
+        with self.assertRaises(ValueError):
+            verify_instance_stopped(mock_ec2_client, "i-123")
+
+
 class TestRestartInstance(unittest.TestCase):
     def test_calls_reboot_instance(self) -> None:
         # Setup
@@ -518,3 +576,126 @@ class TestDescribeInstancePublicIp(unittest.TestCase):
 
         with self.assertRaises(botocore.exceptions.ClientError):
             describe_instance_public_ip(mock_client, "i-abc")
+
+
+class TestGetInstanceStopTime(unittest.TestCase):
+    """The stop instant is the only provable quiescence bound, and it comes from a prose field."""
+
+    @staticmethod
+    def _client(reason: str) -> Mock:
+        mock_client = Mock()
+        mock_client.describe_instances.return_value = {
+            "Reservations": [{"Instances": [{"StateTransitionReason": reason}]}]
+        }
+        return mock_client
+
+    def test_parses_the_user_initiated_form(self) -> None:
+        result = get_instance_stop_time(self._client("User initiated (2026-09-17 14:00:00 GMT)"), "i-1")
+        self.assertEqual(result, datetime(2026, 9, 17, 14, 0, 0, tzinfo=UTC))
+
+    def test_parses_an_instance_initiated_shutdown(self) -> None:
+        """The prefix varies by cause, so the timestamp is searched for rather than the string parsed."""
+        reason = "Client.InstanceInitiatedShutdown: Instance initiated shutdown (2026-09-17 03:12:45 GMT)"
+        result = get_instance_stop_time(self._client(reason), "i-1")
+        self.assertEqual(result, datetime(2026, 9, 17, 3, 12, 45, tzinfo=UTC))
+
+    def test_returns_an_aware_datetime(self) -> None:
+        """Naive would raise on comparison against an aware backup timestamp, at the worst moment."""
+        result = get_instance_stop_time(self._client("User initiated (2026-09-17 14:00:00 GMT)"), "i-1")
+        assert result is not None
+        self.assertIsNotNone(result.tzinfo)
+
+    def test_running_instance_reports_no_stop_time(self) -> None:
+        """EC2 blanks this field while the instance runs; None means "cannot be established"."""
+        self.assertIsNone(get_instance_stop_time(self._client(""), "i-1"))
+
+    def test_untimestamped_reason_reports_no_stop_time(self) -> None:
+        """Not every shutdown reason carries an instant, and a reason alone proves nothing."""
+        self.assertIsNone(get_instance_stop_time(self._client("Client.UserInitiatedShutdown"), "i-1"))
+
+    def test_never_guesses_a_time_from_an_unparseable_field(self) -> None:
+        """Returning "now", or the epoch, would turn an unknown into a false pass or a false failure."""
+        self.assertIsNone(get_instance_stop_time(self._client("stopped (yesterday)"), "i-1"))
+
+    def test_missing_reservation_raises(self) -> None:
+        mock_client = Mock()
+        mock_client.describe_instances.return_value = {"Reservations": []}
+        with self.assertRaises(ValueError):
+            get_instance_stop_time(mock_client, "i-1")
+
+    def test_missing_instance_raises(self) -> None:
+        mock_client = Mock()
+        mock_client.describe_instances.return_value = {"Reservations": [{"Instances": []}]}
+        with self.assertRaises(ValueError):
+            get_instance_stop_time(mock_client, "i-1")
+
+
+class TestVerifyInstanceStoppedSince(unittest.TestCase):
+    """Raises unless the instance has been stopped continuously since every instant given.
+
+    Establishes the only provable no-data-loss condition available: a volume cannot change while the
+    instance mounting it is stopped, so a capture taken after the last shutdown is byte-identical to the
+    volume. EBS exposes no last-write timestamp, and a capture's AGE proves nothing either way.
+    """
+
+    @staticmethod
+    def _client(reason: str) -> Mock:
+        mock_client = Mock()
+        mock_client.describe_instances.return_value = {
+            "Reservations": [{"Instances": [{"StateTransitionReason": reason}]}]
+        }
+        return mock_client
+
+    _STOPPED = "User initiated (2026-09-17 14:00:00 GMT)"
+
+    def test_passes_when_every_instant_is_after_the_stop(self) -> None:
+        since = [datetime(2026, 9, 17, 14, 5, tzinfo=UTC), datetime(2026, 9, 17, 15, 0, tzinfo=UTC)]
+        verify_instance_stopped_since(self._client(self._STOPPED), "i-1", since)  # no raise
+
+    def test_raises_when_any_instant_precedes_the_stop(self) -> None:
+        """The weakest instant decides: one capture taken before the last shutdown condemns the set."""
+        since = [datetime(2026, 9, 17, 15, 0, tzinfo=UTC), datetime(2026, 9, 17, 13, 0, tzinfo=UTC)]
+        with self.assertRaises(IncompatibleHostStateError) as ctx:
+            verify_instance_stopped_since(self._client(self._STOPPED), "i-1", since)
+
+        # The offending instant is named, and it is the EARLIEST one -- the only one provably stale.
+        self.assertIn("2026-09-17T13:00:00+00:00", str(ctx.exception))
+
+    def test_an_instant_equal_to_the_stop_raises(self) -> None:
+        """EC2 reports to the second, so a same-second capture cannot be ordered against the flush.
+
+        The comparison resolves against the operation because only one of the two possible answers is
+        safe: a capture taken mid-flush restores looking fine and is missing whatever was still buffered.
+        """
+        since = [datetime(2026, 9, 17, 14, 0, tzinfo=UTC)]
+        with self.assertRaises(IncompatibleHostStateError):
+            verify_instance_stopped_since(self._client(self._STOPPED), "i-1", since)
+
+    def test_raises_when_the_stop_time_is_unknown(self) -> None:
+        """ "Cannot establish" must resolve the same way as "not quiesced", never as a pass."""
+        since = [datetime(2026, 9, 17, 15, 0, tzinfo=UTC)]
+        with self.assertRaises(IncompatibleHostStateError) as ctx:
+            verify_instance_stopped_since(self._client(""), "i-1", since)
+
+        self.assertIn("no stop time", str(ctx.exception))
+
+    def test_the_refusal_carries_a_hint(self) -> None:
+        """The CLI renders the hint, and it is the only place the remedy appears."""
+        since = [datetime(2026, 9, 17, 13, 0, tzinfo=UTC)]
+        with self.assertRaises(IncompatibleHostStateError) as ctx:
+            verify_instance_stopped_since(self._client(self._STOPPED), "i-1", since)
+
+        self.assertIn("fresh backup", ctx.exception.hint or "")
+
+    def test_no_instants_refuses_rather_than_passing_vacuously(self) -> None:
+        """A gate that cannot tell "nothing to check" from "verified" is one refactor from passing.
+
+        The caller drops unparseable instants before reaching here, so an empty list means every
+        timestamp it had was unusable -- the opposite of proof. Today's only caller happens to guard this
+        upstream; the gate no longer relies on that.
+        """
+        with self.assertRaises(IncompatibleHostStateError) as ctx:
+            verify_instance_stopped_since(self._client(self._STOPPED), "i-1", [])
+
+        self.assertIn("No backup timestamps", str(ctx.exception))
+        self.assertIn("fresh backup", str(ctx.exception.hint or ""))

@@ -11,6 +11,7 @@ overrides:
   # ami_id: null
   # availability_zone: any
   # custom_tags: {}
+  # ebs_snapshot_ids: {}
   # iam_role_names_allowlist: []
   # iam_role_prefix: Jupyter-deploy-jupyterlab
   # iam_user_names_allowlist: []

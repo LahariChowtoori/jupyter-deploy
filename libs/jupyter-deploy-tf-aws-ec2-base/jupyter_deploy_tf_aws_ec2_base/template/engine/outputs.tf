@@ -136,3 +136,23 @@ output "persisting_resources" {
   value       = tolist(concat(module.volumes.persist_ebs_volumes, module.volumes.persist_efs_file_systems))
 }
 
+
+output "availability_zone" {
+  description = "Availability zone the instance and its EBS volumes are placed in."
+  value       = module.ec2_instance.availability_zone
+}
+
+output "jupyter_data_volume_id" {
+  description = "ID of the EBS volume mounted on the notebook home directory."
+  value       = module.volumes.jupyter_data_volume_id
+}
+
+output "additional_ebs_volumes" {
+  description = "JSON-encoded inventory of the configured additional EBS mounts, consumed by `jd volume`."
+  value       = module.volumes.additional_ebs_volumes
+}
+
+output "additional_efs_volumes" {
+  description = "JSON-encoded inventory of the configured additional EFS mounts, consumed by `jd volume`."
+  value       = module.volumes.additional_efs_volumes
+}

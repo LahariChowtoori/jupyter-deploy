@@ -59,12 +59,56 @@ def to_list_str(concatenated_list: str, sep: str = ",") -> list[str]:
     return items
 
 
+def parse_timestamp(raw: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp to an aware datetime, or None when it is absent or unparseable.
+
+    Naive input is read as UTC: every producer here is a cloud API reporting an instant in UTC, and an
+    aware value is what callers need to compare against another timestamp without raising.
+
+    None rather than a raise, because "no usable timestamp" is a normal answer from an API that reports
+    a field only sometimes -- and callers that must not guess (a data-safety check) can treat None as a
+    refusal, while callers that only display it can fall back to the raw string.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
+
 def format_timestamp(raw: str) -> str:
     """Format an ISO timestamp to a human-readable UTC date string."""
-    if not raw:
-        return ""
-    try:
-        dt = datetime.fromisoformat(raw)
-        return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    except ValueError:
+    parsed = parse_timestamp(raw)
+    if parsed is None:
         return raw
+    return parsed.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def format_age(iso_timestamp: str) -> str:
+    """Convert an ISO timestamp to a human-readable age (e.g. '3h ago', '2d ago').
+
+    Unit switches by magnitude so the value stays short in a table cell or a one-line status.
+    An empty input yields "", and an unparseable one is returned verbatim rather than guessed at —
+    a caller rendering a table would rather show the raw value than a wrong age.
+
+    Lived in `api/k8s/utils.py` until it acquired a second caller outside Kubernetes. Nothing about it
+    is k8s- or provider-specific, and `api/*` is for provider SDK code, so it belongs here.
+    """
+    if not iso_timestamp:
+        return ""
+    parsed = parse_timestamp(iso_timestamp)
+    if parsed is None:
+        return iso_timestamp
+    total_seconds = int((datetime.now(UTC) - parsed).total_seconds())
+
+    if total_seconds < 60:
+        return f"{total_seconds}s ago"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"

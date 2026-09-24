@@ -464,6 +464,99 @@ class InvalidComponentVerbError(JupyterDeployError, ValueError):
         super().__init__(f"'{verb}' is not supported for {component_type} component '{component_name}'.")
 
 
+class VolumeNotFoundError(JupyterDeployError, ValueError):
+    """Raised when a volume name is not one this deployment mounts.
+
+    A handler-layer error, like `ImageNotFoundError` and `ComponentNotFoundError`: the user named
+    something the declaration does not have, so the answer is the list of names that ARE valid. That
+    is why it is not `ResourceNotFoundError`, which is an `InstructionError` for a resource a provider
+    API could not find and carries no list.
+
+    Attributes:
+        volume_name: The name that was looked up
+        valid_volumes: The identities this deployment does mount
+    """
+
+    def __init__(self, volume_name: str, valid_volumes: list[str]) -> None:
+        self.volume_name = volume_name
+        self.valid_volumes = valid_volumes
+        super().__init__(f"Volume '{volume_name}' not found.")
+
+
+class VolumeNotBackupableError(JupyterDeployError, ValueError):
+    """Raised when a volume exists but taking a backup of it is not something that can happen.
+
+    Deliberately not an `IncompatibleHostStateError`: nothing about the host is wrong, and no retry,
+    permission grant, or state change makes the answer different.
+
+    Two independent causes, kept apart because the remedy differs: a volume the deployment only
+    *references* is the operator's to back up by whatever means created it, while a storage kind for which
+    the template declares no backup mechanism has nothing to be done at all.
+
+    Attributes:
+        volume_name: The volume that was asked for
+        reason: Why no backup can be taken, phrased for the user
+        volume_class: The class of storage, when the template declared one
+        hint: What to do instead
+    """
+
+    def __init__(self, volume_name: str, reason: str, volume_class: str = "", hint: str | None = None) -> None:
+        self.volume_name = volume_name
+        self.reason = reason
+        self.volume_class = volume_class
+        self.hint = hint
+        super().__init__(f"Volume '{volume_name}' cannot be backed up: {reason}.")
+
+
+class BackupsNotReadyError(JupyterDeployError, ValueError):
+    """Raised when volumes are about to be replaced and their backups cannot be shown to hold all the data.
+
+    A refusal BEFORE the plan, which is the only place this can be caught in time. Replacing a volume from
+    a backup that predates the last write succeeds -- the apply reports success, the app comes back, and the
+    work done since the backup is simply gone. There is nothing to notice and nothing to roll back, so the
+    check has to happen while the operation can still be declined.
+
+    Deliberately not a warning. The alternative to refusing is completing an operation whose outcome the
+    user did not ask for and cannot undo.
+
+    Attributes:
+        reason: What could not be established, phrased for the user
+        volume_names: The volumes the answer applies to, when the reason is per-volume
+        hint: The commands that make the answer yes
+    """
+
+    def __init__(self, reason: str, volume_names: list[str] | None = None, hint: str | None = None) -> None:
+        self.reason = reason
+        self.volume_names = volume_names or []
+        self.hint = hint
+        super().__init__(f"Volume backups are not ready to restore from: {reason}.")
+
+
+class ResourcePollTimeoutError(JupyterDeployError, TimeoutError):
+    """Raised when a provider operation did not reach its expected state within the time allowed.
+
+    The operation is NOT cancelled: the provider carries on, so this says "stopped watching", never
+    "failed". That distinction is the whole reason it is typed -- a bare `TimeoutError` is not a
+    `JupyterDeployError`, so it escaped the CLI's error handling and surfaced as a traceback, which reads
+    as data lost when nothing is.
+
+    Attributes:
+        resource_kind: What was being waited on (e.g. 'volume backup')
+        resource_name: Its provider id
+        state: The last state observed, so the user knows how far it got
+        hint: How to check on it and what to do next
+    """
+
+    def __init__(self, resource_kind: str, resource_name: str, state: str, hint: str | None = None) -> None:
+        self.resource_kind = resource_kind
+        self.resource_name = resource_name
+        self.state = state
+        self.hint = hint
+        super().__init__(
+            f"Stopped waiting for {resource_kind} '{resource_name}' to be ready, latest state: '{state}'. "
+        )
+
+
 class ResourceNotFoundError(InstructionError, RuntimeError):
     """Raised when a provider resource is not found (e.g., node, pod, deployment).
 

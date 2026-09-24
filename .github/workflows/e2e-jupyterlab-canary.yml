@@ -1,0 +1,45 @@
+name: E2E canary (jupyterlab template)
+
+on:
+  schedule:
+    # Weekly: Sunday 06:00 UTC — six hours after the base and eks-oidc canaries, so their
+    # 2-3h chains have finished and three fresh deploys are not billing the account at once.
+    - cron: '0 6 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+# One canary at a time, so a manual run waits for the weekly one instead of queuing a second fresh run.
+# Distinct from the fresh workflow's own group (e2e-jupyterlab-9), which the dispatched run needs.
+concurrency:
+  group: e2e-canary-jupyterlab
+  cancel-in-progress: false
+
+jobs:
+  # Runs the released version's own fresh workflow at its release tag (#396). jupyterlab has no
+  # OAuth app, so the slot it passes is the ECR repo slot (9 = canary) — hence slot-input.
+  canary:
+    if: github.repository == 'jupyter-infra/jupyter-deploy'
+    uses: ./.github/workflows/e2e-canary-dispatch.yml
+    permissions:
+      actions: write
+      contents: read
+    with:
+      package: jupyter-deploy-tf-aws-ec2-jupyterlab
+      workflow-file: e2e-jupyterlab-fresh.yml
+      slot: "9"
+      slot-input: ecr-slot
+
+  # Release tags created before #396 cannot be dispatched in canary mode, so main's fresh workflow
+  # runs as before. Delete this job once a release of this template carries the dispatch inputs.
+  canary-from-main:
+    needs: canary
+    if: needs.canary.outputs.supported == 'false'
+    uses: ./.github/workflows/e2e-jupyterlab-fresh.yml
+    with:
+      ecr-slot: "9"
+      install-mode: pypi
+      install-variant: canary
+    secrets: inherit

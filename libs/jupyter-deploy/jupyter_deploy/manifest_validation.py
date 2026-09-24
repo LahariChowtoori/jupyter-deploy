@@ -11,13 +11,24 @@ non-trivial in Python, and a typo in one command must not block unrelated operat
 Pure functions of the parsed manifest — no project/cluster/IO — so tests call them directly.
 """
 
+import re
+
 from jupyter_deploy.enum import ConditionOperator, InstructionArgumentSource
 from jupyter_deploy.exceptions import InvalidCommandGrammarError
 from jupyter_deploy.manifest import (
+    VOLUME_READINESS_COMMAND,
     JupyterDeployCommandV1,
     JupyterDeployConditionOperandV1,
     JupyterDeployManifestV1,
 )
+
+_STEP_REF_RE = re.compile(r"^\[(\d+)\]")
+
+
+def _step_reference(source_key: str) -> int | None:
+    """Return the step index a `source: result` source-key points at, or None if it names no step."""
+    match = _STEP_REF_RE.match(source_key)
+    return int(match.group(1)) if match else None
 
 
 def _validate_operand(operand: JupyterDeployConditionOperandV1, ctx: str, violations: list[str]) -> None:
@@ -71,6 +82,41 @@ def collect_command_violations(command: JupyterDeployCommandV1) -> list[str]:
             if operator == ConditionOperator.IN and condition.right.source.lower() == InstructionArgumentSource.LITERAL:
                 violations.append(f"{ctx}: 'in' right operand must be list-typed, not a literal scalar")
 
+    # Step references (`source: result`, `source-key: '[N].Field'`) are POSITIONAL, so inserting a step
+    # silently repoints every later reference. Checked here because only the whole command knows the
+    # bounds -- a field validator sees one step.
+    #
+    # What this catches: out-of-bounds (a step was deleted), a step referencing itself or a later step
+    # (impossible -- results do not exist yet), and a `source: result` with no '[N]' at all.
+    #
+    # What it does NOT catch: a reference that shifted to a DIFFERENT but still in-bounds step, which is
+    # what inserting a step actually produces. Detecting that needs a static api-name -> result-names
+    # registry so the FIELD can be validated against the step, not just the index. Pinned as a known gap
+    # in test_manifest_validation.py rather than left as an assumption.
+    for idx, instruction in enumerate(command.sequence):
+        for arg in instruction.arguments:
+            if arg.source.lower() != InstructionArgumentSource.INSTRUCTION_RESULT:
+                continue
+            ref = _step_reference(arg.source_key)
+            ctx = f"command '{command.cmd}' sequence[{idx}] argument '{arg.api_attribute}'"
+            if ref is None:
+                violations.append(f"{ctx}: source 'result' requires a '[N].Field' source-key")
+            elif ref >= idx:
+                violations.append(
+                    f"{ctx}: references step [{ref}], which is itself or later; a step can only read "
+                    "results of steps before it"
+                )
+
+    for result in command.results or []:
+        if result.source.lower() != InstructionArgumentSource.INSTRUCTION_RESULT:
+            continue
+        ref = _step_reference(result.source_key)
+        ctx = f"command '{command.cmd}' result '{result.result_name}'"
+        if ref is None:
+            violations.append(f"{ctx}: source 'result' requires a '[N].Field' source-key")
+        elif ref >= len(command.sequence):
+            violations.append(f"{ctx}: references step [{ref}], but the sequence has {len(command.sequence)} step(s)")
+
     for idx, instruction in enumerate(command.sequence):
         when = instruction.when
         if when is None:
@@ -96,10 +142,36 @@ def validate_command(command: JupyterDeployCommandV1) -> None:
         raise InvalidCommandGrammarError(violations)
 
 
+def collect_volume_violations(manifest: JupyterDeployManifestV1) -> list[str]:
+    """Violations in the `volumes:` declaration that only the whole manifest can see.
+
+    Omitting the readiness command is a legitimate opt-out for storage where restoring is always safe.
+    It is NOT safe in one combination: a volume declaring a `backups-map` is one `jd config
+    --restore-volumes` away from being REPLACED from a backup, and without the command nothing
+    establishes that the backup still holds what the volume holds. The restore then succeeds and the
+    session's work is simply gone -- the failure this whole feature exists to prevent, reintroduced by
+    an omission rather than by a bug.
+    """
+    if not manifest.volumes or manifest.supports_volume_readiness():
+        return []
+
+    declaring = [v.name for v in manifest.volumes.static if v.backups_map]
+    declaring += [d.group for d in manifest.volumes.dynamic if d.backups_map]
+    if not declaring:
+        return []
+
+    return [
+        f"volumes: {', '.join(declaring)} declare a backups-map, so `jd config --restore-volumes` can "
+        f"replace them from a backup, but the template declares no '{VOLUME_READINESS_COMMAND}' command "
+        "to establish that the backups are still current"
+    ]
+
+
 def validate_manifest(manifest: JupyterDeployManifestV1) -> None:
     """Raise InvalidCommandGrammarError listing every violation across all commands."""
     violations: list[str] = []
     for command in manifest.commands or []:
         violations.extend(collect_command_violations(command))
+    violations.extend(collect_volume_violations(manifest))
     if violations:
         raise InvalidCommandGrammarError(violations)

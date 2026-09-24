@@ -28,6 +28,14 @@ ORDER_MUTATING_GPU_PIXI = _MUTATING_BASE  # 10
 # Apply #2: GPU + pixi  ->  CPU + uv (external volumes stay mounted)
 ORDER_MUTATING_CPU_UV = _MUTATING_BASE + 10  # 20
 
+# Apply #3: availability-zone swap with volume preservation (test_volume_swaps.py).
+#
+# LAST of the mutating applies, and unlike the two above it is genuinely runnable on its own: its
+# fixture provisions the mounts it needs rather than inheriting them from apply #1. It is ordered last
+# anyway because it leaves the deployment in a different zone, and because a zone swap is the most
+# expensive thing in the suite -- a failure here should not cost the cheaper coverage.
+ORDER_MUTATING_VOLUME_SWAPS = _MUTATING_BASE + 20  # 30
+
 # --------------------------------------------------------------------------- mutating pass
 # Shared by BOTH mutating files: apply #1 provisions the mounts and writes the flags, apply #2
 # asserts they survived. They live here rather than in either test module so neither has to import
@@ -43,3 +51,14 @@ EFS_FLAG = "external-efs1/e2e_flag_efs.txt"
 # Mount points the applies provision.
 EBS_MOUNT = "name=ebs1,mount_point=external-ebs1,size_gb=50"
 EFS_MOUNT = "name=efs1,mount_point=external-efs1"
+
+# --------------------------------------------------------------------------- volume identities
+# What `jd volume --name` takes: the mount path as the user sees it in the app, NOT the terraform
+# resource name or the `name=` field of the mount spec. Derived from the mount points above so a
+# renamed mount cannot leave these stale.
+#
+# `home` is also the DEFAULT --name, because it is the first entry of the manifest's `volumes.static`
+# list. Asserted in test_volume.py rather than assumed.
+HOME_VOLUME = "home"
+EBS_VOLUME = f"{HOME_VOLUME}/external-ebs1"
+EFS_VOLUME = f"{HOME_VOLUME}/external-efs1"

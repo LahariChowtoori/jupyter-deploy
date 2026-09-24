@@ -481,7 +481,12 @@ resource "aws_ssm_association" "instance_startup" {
   automation_target_parameter_name = "InstanceIds"
   max_concurrency                  = "1"
   max_errors                       = "0"
-  wait_for_success_timeout_seconds = 300
+  # 15min, not the 5min inherited from the base template: this document fetches the whole S3 bundle
+  # and then BUILDS two images on the instance (the jupyter flavor and the Go auth-sidecar), which has
+  # been measured at ~7min on a t3.medium. A too-short window fails the apply on a deployment that is
+  # in fact healthy -- the association reached Success 61s after terraform gave up. The window only
+  # bounds how much slowness is tolerated; it costs nothing when the build is fast.
+  wait_for_success_timeout_seconds = 900
   tags                             = local.combined_tags
 
   lifecycle {

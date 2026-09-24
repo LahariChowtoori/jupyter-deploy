@@ -10,4 +10,7 @@ required:
   subdomain: "${JD_E2E_VAR_SUBDOMAIN}"
 required_sensitive:
   oauth_app_client_secret: "${JD_E2E_VAR_OAUTH_APP_CLIENT_SECRET}"
-overrides: {}
+overrides:
+  # Pinned rather than left to default: test_volume_swaps.py swaps the zone and pins the
+  # deployment back to this one, so "the base zone" has to be a value the suite knows.
+  availability_zone: "${JD_E2E_AVAILABILITY_ZONE}"

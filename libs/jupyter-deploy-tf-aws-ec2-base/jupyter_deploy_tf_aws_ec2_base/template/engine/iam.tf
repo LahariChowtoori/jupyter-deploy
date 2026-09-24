@@ -90,3 +90,37 @@ resource "aws_iam_role_policy_attachment" "certs_secret_access" {
   role       = module.ec2_iam_role.execution_role_name
   policy_arn = aws_iam_policy.certs_secret_access.arn
 }
+
+# ================================================================================
+# EC2 IAM ROLE - ACCESS ALLOWLIST PARAMETER
+# ================================================================================
+#
+# Lives here rather than inside the ec2_iam_role module for the same reason as the two policies
+# above: the parameter is created in services.tf, which is downstream of the role.
+#
+# cloud-init reads the allowlist from this parameter on first boot instead of having it interpolated
+# into the startup document, which is what lets an allowlist change avoid re-running the whole boot
+# path (see services.tf and cloudinit.sh.tftpl). Read-only, and scoped to this deployment's single
+# parameter: the instance never writes it, and has no business reading any other.
+data "aws_iam_policy_document" "auth_allowlist_ssm_access" {
+  statement {
+    sid = "SsmAuthAllowlistRead"
+    actions = [
+      "ssm:GetParameter"
+    ]
+    resources = [
+      aws_ssm_parameter.auth_allowlist.arn
+    ]
+  }
+}
+
+resource "aws_iam_policy" "auth_allowlist_ssm_access" {
+  name_prefix = "auth-allowlist-ssm-access-"
+  tags        = local.combined_tags
+  policy      = data.aws_iam_policy_document.auth_allowlist_ssm_access.json
+}
+
+resource "aws_iam_role_policy_attachment" "auth_allowlist_ssm_access" {
+  role       = module.ec2_iam_role.execution_role_name
+  policy_arn = aws_iam_policy.auth_allowlist_ssm_access.arn
+}

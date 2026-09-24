@@ -118,6 +118,7 @@ jobs:
 
       - name: Test installation from Test PyPI
         run: |
+          set -o pipefail
           uv venv
           for i in 1 2; do
             if uv pip install \

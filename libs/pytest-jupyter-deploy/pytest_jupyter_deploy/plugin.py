@@ -153,6 +153,30 @@ def pytest_addoption(parser: Any) -> None:
     )
 
 
+def _reject_cli_mutating(items: list) -> None:
+    """Fail collection if any test carries both the `cli` and `mutating` markers.
+
+    The two markers make opposite promises. `cli` means "safe for the release-validation pass":
+    read-only, fast, leaves the deployment as it found it. `mutating` means it changes the deployment
+    and only runs when explicitly requested. A test with both would mutate live infrastructure during
+    release validation — the one thing that pass must never do.
+
+    Enforced here rather than in each template's conftest because every suite loads this plugin, and
+    this hook already owns what `mutating` means. Fails collection rather than skipping: a mis-marked
+    test is an authoring mistake, and the two decorators sit one line apart in a stack, so it is both
+    easy to make and invisible in review.
+
+    Raises:
+        pytest.UsageError: If any test is marked both `cli` and `mutating`.
+    """
+    both = [item.nodeid for item in items if {"cli", "mutating"} <= set(item.keywords)]
+    if both:
+        raise pytest.UsageError(
+            "These tests are marked both 'cli' and 'mutating'; a cli test must not change the "
+            "deployment:\n  " + "\n  ".join(both)
+        )
+
+
 def pytest_collection_modifyitems(config: Any, items: list) -> None:
     """Skip full_deployment and mutating tests when appropriate.
 
@@ -165,10 +189,17 @@ def pytest_collection_modifyitems(config: Any, items: list) -> None:
     - Deploying from scratch (no --e2e-existing-project), OR
     - Explicitly requested with --with-mutating-cases flag
 
+    Also refuses a `cli` + `mutating` combination outright.
+
     Args:
         config: Pytest config object
         items: List of collected test items
+
+    Raises:
+        pytest.UsageError: If any test is marked both `cli` and `mutating`.
     """
+    _reject_cli_mutating(items)
+
     existing_project = config.getoption("--e2e-existing-project")
     with_mutating_cases = config.getoption("--with-mutating-cases")
     with_full_deployment = config.getoption("--with-full-deployment")
@@ -468,3 +499,34 @@ def fast_idle_operator(kubernetes_cluster_login: None) -> Generator[None, None, 
         yield
     finally:
         set_operator_args(original_args)
+
+
+@pytest.fixture(scope="module")
+def stopped_host(e2e_deployment: EndToEndDeployment) -> Generator[None, None, None]:
+    """Stop the host, yield WHILE it is stopped, then start it again.
+
+    For operations that are only valid against a quiesced disk — `jd volume backup` refuses to run
+    otherwise, because a snapshot of a live volume is crash-consistent and can restore corrupt.
+
+    Yields while stopped, unlike a stop/start cycle fixture that observes a transition and hands back
+    a running host: the point here is to run commands against a stopped host.
+
+    Module-scoped, so every test in a file shares one ~4-minute cycle. Two consequences worth knowing:
+
+    - Everything ordered AFTER the first test that requests it runs against a stopped host too. That
+      is usually fine (control-plane commands do not care), but anything needing `jd server exec` will
+      fail.
+    - It is therefore set up by whichever test requests it FIRST. A file that also needs work done on
+      a running host must express that ordering itself — compose this with the running-host fixture in
+      one module-scoped fixture rather than relying on each test's parameter order.
+    """
+    e2e_deployment.ensure_server_running()
+    e2e_deployment.cli.run_command(["jupyter-deploy", "host", "stop"])
+    try:
+        yield
+    finally:
+        # Best-effort: an earlier failure must not be masked by a teardown error, and a test that
+        # legitimately replaced the instance (a zone swap) leaves it already running.
+        with contextlib.suppress(Exception):
+            e2e_deployment.ensure_host_running()
+            e2e_deployment.ensure_server_running(wait_after_restart=True)

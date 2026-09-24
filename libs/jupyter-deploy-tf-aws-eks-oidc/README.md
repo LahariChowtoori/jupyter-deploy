@@ -320,6 +320,7 @@ The template provides two variable presets:
 | `secret_arn` | ARN of the Secrets Manager secret storing the OAuth app client secret |
 | `jupyterlab_image_uri` | ECR image URI for the JupyterLab workspace image |
 | `kubeconfig_path` | Path to the local kubeconfig file for this cluster |
+| `acm_certificate_arn` | ARN of the ACM certificate for the deployment domain |
 
 ## License
 

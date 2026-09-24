@@ -15,7 +15,7 @@ resource "random_id" "postfix" {
 
 locals {
   template_name    = "tf-aws-ec2-base"
-  template_version = "0.5.3"
+  template_version = "0.6.0"
 
   default_tags = {
     Source       = "jupyter-deploy"
@@ -82,7 +82,9 @@ module "ec2_instance" {
   source                  = "./modules/ec2_instance"
   ami_id                  = coalesce(var.ami_id, module.ami_al2023.ami_id)
   instance_type           = var.instance_type
-  subnet_id               = module.network.subnet_ids[0]
+  vpc_id                  = module.network.vpc_id
+  subnet_ids              = module.network.subnet_ids
+  availability_zone       = var.availability_zone
   security_group_id       = module.network.security_group_id
   key_pair_name           = var.key_pair_name
   combined_tags           = local.combined_tags
@@ -93,12 +95,11 @@ module "ec2_instance" {
   eip_allocation_id       = module.network.eip_allocation_id
 }
 
-# Query the selected subnet to get its AZ (known at plan time, avoids EBS volume replacement)
-data "aws_subnet" "selected" {
-  id = module.ec2_instance.subnet_id
-}
-
 # Volumes module for EBS/EFS volumes
+#
+# The zone and subnet both come from the instance module, which owns placement: it resolves
+# var.availability_zone to a subnet and reads the zone back from that subnet, so the EBS volumes
+# land in the same zone as the instance and the EFS mount targets in the same subnet.
 module "volumes" {
   source                = "./modules/volumes"
   region                = var.region
@@ -108,7 +109,9 @@ module "volumes" {
   volume_type           = var.volume_type
   additional_ebs_mounts = var.additional_ebs_mounts
   additional_efs_mounts = var.additional_efs_mounts
-  availability_zone     = data.aws_subnet.selected.availability_zone
+  ebs_snapshot_ids      = var.ebs_snapshot_ids
+  availability_zone     = module.ec2_instance.availability_zone
+  subnet_id             = module.ec2_instance.subnet_id
   instance_id           = module.ec2_instance.id
   efs_security_group_id = module.network.efs_security_group_id
 }

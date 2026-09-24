@@ -1,10 +1,9 @@
 """Apply #1 of the mutating pass: CPU + uv -> GPU + pixi + external volumes.
 
 **This file and ``test_mutating_cpu_uv.py`` mutate ONE deployment in place, in order.** That is
-the design, not an accident of history. The base template fans the equivalent coverage across
-five mutating jobs and seven `terraform apply` cycles (~85 minutes); this suite does it in two
-applies on a single deployment, and gets *better* coverage for it — because the thing under test
-is the transition, not the end state:
+the design, not an accident of history. The alternative — one deployment per configuration, an
+apply each — costs far more wall-clock and covers *less*, because the thing under test is the
+transition, not the end state:
 
   - terraform replacing the instance under a persisted data volume,
   - the volume reattaching and remounting at boot,
@@ -18,12 +17,13 @@ about their instance and runs `jd config && jd up`.
 Consequence: ``-k test_mutating_cpu_uv`` alone is NOT a valid entry point. The ``ORDER_*``
 constants encode the dependency; do not "optimize" these into two independent runs.
 
-Omitted: covered by the base template suite (`test_config_apply.py`, `test_external_volumes.py`,
-`test_gpu.py`, `test_pixi.py`, `test_uv.py` — 5 files / 12 tests / 7 applies)
-  The separate "provision external volumes", "upgrade the instance type", "switch to pixi" and
-  "switch to uv" applies, plus the per-volume file/directory operation matrices (which
-  ``test_home_volume.py`` already covers for the home volume — the code path is the same mount
-  machinery). Folded here into two applies.
+Folded into this one apply, rather than paying an apply each: provisioning the external volumes,
+raising the log retention, switching the instance type, and switching the package manager.
+
+Dropped deliberately: the per-volume file/directory operation matrices for EBS and EFS. They
+exercise the same mount machinery ``test_home_volume.py`` already covers for the home volume, once
+per volume type. ``test_mutating_cpu_uv.py`` keeps a write probe and a `df` check per volume, which
+is what actually distinguishes a real mount from a fallback directory on the root volume.
 """
 
 from pathlib import Path
@@ -44,6 +44,7 @@ _GPU_APPLY_TIMEOUT_SECONDS = 3600
 
 @pytest.mark.order(ORDER_MUTATING_GPU_PIXI)
 @pytest.mark.mutating
+@pytest.mark.gpu
 @skip_if_testvars_not_set(["JD_E2E_GPU_INSTANCE", "JD_E2E_LARGER_LOG_RETENTION_DAYS"])
 def test_switch_to_gpu_pixi_with_external_volumes(
     e2e_deployment: EndToEndDeployment,
@@ -128,6 +129,7 @@ def test_switch_to_gpu_pixi_with_external_volumes(
 
 @pytest.mark.order(ORDER_MUTATING_GPU_PIXI + 1)
 @pytest.mark.mutating
+@pytest.mark.gpu
 @skip_if_testvars_not_set(["JD_E2E_GPU_INSTANCE"])
 def test_run_gpu_notebook(
     e2e_deployment: EndToEndDeployment,
@@ -172,6 +174,7 @@ def test_run_gpu_notebook(
 
 @pytest.mark.order(ORDER_MUTATING_GPU_PIXI + 2)
 @pytest.mark.mutating
+@pytest.mark.gpu
 def test_pixi_install_and_persist(
     e2e_deployment: EndToEndDeployment,
     client_proxy_app: LocalProxyApplication,
@@ -203,6 +206,7 @@ def test_pixi_install_and_persist(
 
 @pytest.mark.order(ORDER_MUTATING_GPU_PIXI + 3)
 @pytest.mark.mutating
+@pytest.mark.gpu
 def test_pixi_environment_recovery(
     e2e_deployment: EndToEndDeployment,
     client_proxy_app: LocalProxyApplication,

@@ -1,6 +1,6 @@
 [project]
 name = "pytest-jupyter-deploy"
-version = "0.3.0"
+version = "0.3.1"
 description = "Pytest plugin for E2E testing of jupyter-deploy templates"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,6 +36,12 @@ dependencies = [
 [project.optional-dependencies]
 ui = [
     "pytest-playwright>=0.7.2",
+]
+# `auth_sidecars/aws_auth_sidecar.py` imports boto3 at module scope. The pytest entry point never
+# imports that module, so an install without this extra still works -- but the dependency is real
+# and has to be declared, or a per-package mypy run cannot resolve it.
+aws = [
+    "jupyter-deploy[aws]",
 ]
 
 [project.entry-points.pytest11]

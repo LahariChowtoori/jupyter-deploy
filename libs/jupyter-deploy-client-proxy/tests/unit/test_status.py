@@ -195,7 +195,12 @@ class TestRefreshLoopStateTransitions(unittest.IsolatedAsyncioTestCase):
             # A permanent failure (missing binary, bad bundle shape) cannot self-heal → FAILED + stop,
             # so the loop breaks on its own rather than retrying forever as DEGRADED.
             failing: Mock = AsyncMock(side_effect=NotRetryableTokenCommandError("missing binary"))
-            with patch("jupyter_deploy_client_proxy.server.proxy.fetch_bundle_with_retries", failing):
+            # Pin the sleep to 0 like test_refresh_failure_marks_degraded: with margin=0 the clamp
+            # floors it to MIN_REFRESH_SLEEP_SECONDS (1s), leaving 1s of slack under wait_for.
+            with (
+                patch("jupyter_deploy_client_proxy.server.proxy.get_seconds_until_refresh", return_value=0.0),
+                patch("jupyter_deploy_client_proxy.server.proxy.fetch_bundle_with_retries", failing),
+            ):
                 await asyncio.wait_for(proxy._refresh_loop(), timeout=2)
 
             self.assertEqual(proxy.state, ProxyState.FAILED)
@@ -212,7 +217,11 @@ class TestRefreshLoopStateTransitions(unittest.IsolatedAsyncioTestCase):
             proxy._state = ProxyState.RUNNING
 
             crashing: Mock = AsyncMock(side_effect=RuntimeError("boom"))
-            with patch("jupyter_deploy_client_proxy.server.proxy.fetch_bundle_with_retries", crashing):
+            # Pin the sleep to 0: see test_non_retryable_refresh_marks_failed_and_stops.
+            with (
+                patch("jupyter_deploy_client_proxy.server.proxy.get_seconds_until_refresh", return_value=0.0),
+                patch("jupyter_deploy_client_proxy.server.proxy.fetch_bundle_with_retries", crashing),
+            ):
                 # The loop should catch, mark FAILED, and break — so the task completes on its own.
                 await asyncio.wait_for(proxy._refresh_loop(), timeout=2)
 

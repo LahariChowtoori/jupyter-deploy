@@ -31,9 +31,9 @@ COMMAND_GROUPS = {
         "description": (
             "Resource commands interact with the infrastructure resources backing your"
             " deployment: application servers, compute hosts, Kubernetes clusters,"
-            " platform components, and container images."
+            " platform components, storage volumes, and container images."
         ),
-        "commands": ["server", "host", "cluster", "pool", "component", "image"],
+        "commands": ["server", "host", "cluster", "pool", "component", "volume", "image"],
     },
     "access": {
         "title": "Access Control Commands",

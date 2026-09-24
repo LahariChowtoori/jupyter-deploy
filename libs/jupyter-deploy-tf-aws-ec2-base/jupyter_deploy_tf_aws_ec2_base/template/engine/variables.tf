@@ -65,6 +65,27 @@ variable "ami_id" {
   type        = string
 }
 
+variable "availability_zone" {
+  description = <<-EOT
+    The availability zone to place the instance and its EBS volumes in.
+
+    Set it when the instance type you want has no capacity in that zone: an instance type is not
+    offered in every zone, and even where offered it can be refused for lack of capacity.
+
+    Changing this on an existing deployment DESTROYS the data on every EBS volume unless you back
+    them up first: a block volume cannot cross zones, so terraform must replace it. Run
+    `jd volume backup --all`, then `jd config --restore-volumes --availability-zone <zone>`, and
+    each volume is recreated from its backup.
+
+    NOTHING STOPS YOU FROM SKIPPING THAT. There is no plan-time check: the only guard is inside
+    `jd config --restore-volumes`, which refuses if the backups predate the last time the app ran.
+    Change this zone without that flag and the apply succeeds, quietly, with empty volumes.
+
+    Recommended: any
+  EOT
+  type        = string
+}
+
 variable "min_root_volume_size_gb" {
   description = <<-EOT
     The minimum size in gigabytes of the root EBS volume for the EC2 instance.
@@ -607,4 +628,40 @@ variable "additional_efs_mounts" {
     condition     = length(var.additional_efs_mounts) <= 5
     error_message = "Maximum of 5 EFS mounts allowed."
   }
+}
+variable "ebs_snapshot_ids" {
+  description = <<-EOT
+    Map of volume name to the EBS snapshot id to create that volume from.
+
+    Keys are volume identities, which are mount paths as seen in the app: "home" for the jupyter data
+    volume, and "home/<mount_point>" for each entry of additional_ebs_mounts. An identity absent from
+    the map yields an empty volume, which is the default for a fresh deployment.
+
+    Written by `jd config --restore-volumes`, which resolves the latest backup of each volume; set it
+    by hand only to restore a specific snapshot.
+
+    This is what makes an availability_zone change non-destructive: EBS volumes cannot cross zones, so
+    a zone change replaces them, and without a snapshot to restore from the replacement is empty.
+    Take the backups first with `jd volume backup --all`.
+
+    DO NOT CLEAR OR EDIT THIS ONCE SET. `snapshot_id` forces replacement on an EBS volume, so removing
+    a key that a live volume was created from plans a replacement of that volume -- recreating it EMPTY
+    and discarding everything on it. The same applies to pointing a key at a different snapshot: the
+    volume is replaced with the contents of the new one. Leaving a stale map in place costs nothing;
+    "tidying" it costs the data. Two consequences worth knowing:
+
+      - after a restore, the map keeps naming snapshots that `jd volume backup` may later supersede and
+        delete. That is harmless while the volumes are not being replaced, but a later replacement fails
+        with a not-found rather than silently emptying the volume -- loud, and recoverable by running
+        `jd config --restore-volumes` again to repoint the map at the current backups;
+      - a `jd down` DELETES the backups this map names: the destroy reaps every snapshot tagged with
+        the deployment id, because a torn-down deployment has nothing left to restore into. A `jd up`
+        in the same project directory afterwards therefore fails with `InvalidSnapshot.NotFound`
+        instead of recreating anything. Clear the map before redeploying -- which is safe precisely
+        because the destroy left no volume that was created from it, the one case the rule above is
+        about.
+
+    Recommended: {}
+  EOT
+  type        = map(string)
 }

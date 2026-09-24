@@ -160,6 +160,8 @@ Always run from the root of the repository:
    - Runs `ruff format`, `ruff check --fix`, `mypy`, `terraform fmt`, and `yamllint`
 2. Run unit tests: `just unit-test`
    - Runs `uv run pytest`
+3. If you added a CLI command or edited any CLI docstring, regenerate the reference docs: `just docs-cli-ref`
+   - `just docs-verify` is the CI gate: it fails whenever the committed docs and the CLI disagree
 
 ## Running the client-proxy functional tests
 

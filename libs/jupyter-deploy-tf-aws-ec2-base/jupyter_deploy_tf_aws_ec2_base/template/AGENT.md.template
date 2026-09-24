@@ -51,6 +51,34 @@ This project creates an AWS Secret to store the TLS certificates so that they su
 
 {{ github-users-org-teams-cmd-instructions }}
 
+### Manage the data volumes
+
+`jd volume list` / `show` / `status` report the mounts this project provisions. Volumes are named by
+the path you see in the app: `home` for the notebook home directory, `home/<mount_point>` for each
+entry of `additional_ebs_mounts` / `additional_efs_mounts`.
+
+`jd volume backup` creates an EBS snapshot and **requires the host to be stopped** — a snapshot of a
+running disk is crash-consistent and restores looking fine while missing whatever was still in the
+page cache. Each volume keeps one backup; a new one supersedes the previous. `jd down` deletes them.
+
+EFS mounts report `elastic` / `regional` and cannot be backed up: a file system is regional, so it has
+no snapshot to restore from.
+
+**Changing `availability_zone` on a live deployment destroys the data on every EBS volume** unless you
+back it up first — a block volume cannot cross zones, so terraform must replace it, and a replacement
+with nothing to restore from is empty. Nothing refuses the plan. The safe sequence:
+
+```
+jd host stop
+jd volume backup --all
+jd config --restore-volumes --availability-zone <zone>
+jd up
+```
+
+`--restore-volumes` is the only guard: it refuses if any backup predates the last time the app ran.
+Once `ebs_snapshot_ids` is set, do NOT clear or hand-edit it — `snapshot_id` forces replacement, so
+"tidying" the map recreates live volumes empty.
+
 ### View the full terraform logs
 
 {{ history-logs-instructions }}

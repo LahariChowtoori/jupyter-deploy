@@ -36,12 +36,20 @@ def test_variables_yaml_v1_still_readable_but_produces_v2(e2e_deployment: EndToE
         with open(variables_path) as f:
             config = yaml.safe_load(f)
 
+        overrides = config.get("overrides", {})
+
+        # In v1, `defaults` is what declares which keys `overrides` may legally name — an override of
+        # something absent from `defaults` is rejected as unrecognized. So the fabricated `defaults`
+        # has to cover every key the suite's configuration actually overrides, or this test fails on
+        # the suite's config rather than on the v1 -> v2 migration it exists to check. Two fixed
+        # entries plus the live override keys, rather than a hardcoded list that goes stale the next
+        # time a variable is added to configurations/base.yaml.
         v1_config = {
             "schema_version": 1,
             "required": config.get("required", {}),
             "required_sensitive": config.get("required_sensitive", {}),
-            "overrides": config.get("overrides", {}),
-            "defaults": {"instance_type": "t3.medium", "region": "us-west-2"},
+            "overrides": overrides,
+            "defaults": {"instance_type": "t3.medium", "region": "us-west-2", **overrides},
         }
         with open(variables_path, "w") as f:
             yaml.dump(v1_config, f, sort_keys=False)

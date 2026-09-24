@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from jupyter_deploy.engine.enum import EngineType
 from jupyter_deploy.enum import (
@@ -27,6 +27,26 @@ from jupyter_deploy.exceptions import (
 # token command the proxy re-execs to mint credentials, so the proxy cannot function without it.
 # Its presence is the contract for `jd proxy` / proxy-mode `jd open` (see supports_proxy()).
 PROXY_CONNECT_INFO_COMMAND = "proxy.connect-info"
+
+# The manifest command a template declares to opt into the volume-backup readiness check. Presence IS the
+# contract, exactly as with PROXY_CONNECT_INFO_COMMAND above: a template that declares it is asserting that
+# restoring its volumes from a backup can lose data and must be checked first, and one that omits it is
+# checked for nothing. A constant rather than a `volumes:` field because every other command this feature
+# runs is named by a literal in the handler -- an indirection here would only let a template rename the
+# command, which no template wants.
+VOLUME_READINESS_COMMAND = "volume.validate-backups-ready"
+
+# The manifest command that reports live provider state for the deployment's volumes. Presence is again the
+# contract: a template that declares it gets zone/capacity/state on `jd volume show` and `status`, and one
+# that omits it reports every volume from its declaration alone. ONE command for every storage class the
+# template mounts -- it receives the class as a cli parameter and branches on it, so adding a class is a
+# manifest change and not a Python one.
+# One key per CLI verb, NOT one shared "live state" command. `jd volume show` and `jd volume status`
+# happen to answer from a single AWS call in the aws-ec2 templates, but core must not encode that: a
+# provider whose detail and state come from different APIs has to be able to declare them separately.
+# Templates where they coincide repeat the sequence, until the manifest grows command aliases.
+VOLUME_SHOW_COMMAND = "volume.show"
+VOLUME_STATUS_COMMAND = "volume.status"
 
 
 class JupyterDeployTemplateV1(BaseModel):
@@ -372,6 +392,102 @@ class JupyterDeployImageDefinitionV1(BaseModel):
     tag_output: str = Field(alias="tag-output")
 
 
+class JupyterDeployStaticVolumeV1(BaseModel):
+    """A volume the template always creates, declared by identity.
+
+    `name` IS the identity: the mount path as the user sees it in the app, and the key into the
+    `backups-map` value. There is deliberately no separate backup-key field -- a second field could
+    disagree with this one, and the failure mode is silent (an absent key restores an EMPTY volume).
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    name: str
+    type: str = ""
+    description: str = ""
+    mount_point: str = Field(alias="mount-point", default="")
+    volume_id_value: str = Field(alias="volume-id-value")
+    backups_map: str = Field(alias="backups-map", default="")
+
+
+class JupyterDeployDynamicVolumeV1(BaseModel):
+    """A group of volumes whose members come from configuration, so they cannot be listed statically.
+
+    `inventory-value` names a values: entry resolving to a JSON list; the `*-path` fields extract each
+    field from an entry using the same dotted-path syntax as the health display fields.
+
+    `name-path` must resolve to the identity the template uses as its `backups-map` key. It is also the
+    extension point if a template ever needs the key to differ from the display name -- which is why no
+    backup-key field exists.
+
+    Omitting `backups-map` declares that this kind of volume has no backup mechanism (a network file
+    system backed up by a separate service, say), which is distinct from an individual volume having no
+    identity because the template only references it.
+
+    `state-command` names the command that reads live provider state, and `type` says which kind of
+    storage this group is. Kinds answer to different APIs, but that branch belongs to the command (which
+    receives the type), not here: templates declaring several kinds point them all at one command. Omit
+    `state-command` and the group is reported from its declaration alone, with no live fields.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    group: str
+    type: str = ""
+    inventory_value: str = Field(alias="inventory-value")
+    name_path: str = Field(alias="name-path")
+    mount_point_path: str = Field(alias="mount-point-path", default="")
+    volume_id_path: str = Field(alias="volume-id-path")
+    description_path: str = Field(alias="description-path", default="")
+    backups_map: str = Field(alias="backups-map", default="")
+
+
+class JupyterDeployVolumesV1(BaseModel):
+    """The contract a template satisfies for `jd volume` to work.
+
+    Split by whether the set of volumes is fixed by the template (`static`) or comes from the user's
+    configuration (`dynamic`), rather than inferred from which fields happen to be set. `dynamic` is also
+    where a multi-tenant template would later add scope/query resolution.
+
+    Every field in both is a reference to a values: entry or a path, so no provider or template
+    vocabulary reaches core.
+
+    Backup-restore readiness is NOT declared here: a template opts in by defining the
+    ``VOLUME_READINESS_COMMAND`` command, and its presence is the contract (see ``supports_volume_readiness``).
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    static: list[JupyterDeployStaticVolumeV1] = []
+    dynamic: list[JupyterDeployDynamicVolumeV1] = []
+
+    @model_validator(mode="after")
+    def _identities_are_unique(self) -> "JupyterDeployVolumesV1":
+        """Reject a duplicated static name or group.
+
+        A static `name` is the identity: what `--name` selects, and the key the backups map is written
+        under. Two entries sharing one means the second silently overwrites the first's backup id, so a
+        volume is recreated from ANOTHER volume's backup -- the exact silent data loss this feature
+        exists to prevent, and unobservable afterwards.
+
+        `group` carries no identity today, but it is the field a future scope/query arm would key on,
+        and two indistinguishable groups are an authoring mistake either way.
+
+        Cross-field, so a field validator cannot see it. What this canNOT check is a DYNAMIC name
+        colliding with a static one: those resolve from a template output at run time. The template
+        owns that half -- mount points are uniqueness-validated there, and cannot contain the `/` that
+        every dynamic identity carries, so none can collide with a bare static name.
+
+        Raises:
+            ValueError: If any static name or any group is declared twice.
+        """
+        for field, values in (
+            ("static name", [v.name for v in self.static]),
+            ("group", [d.group for d in self.dynamic]),
+        ):
+            duplicates = sorted({value for value in values if values.count(value) > 1})
+            if duplicates:
+                raise ValueError(f"volumes: each {field} must be unique, got duplicate(s): {duplicates}")
+        return self
+
+
 class JupyterDeployHealthV1(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     active: bool = False
@@ -413,6 +529,7 @@ class JupyterDeployManifestV1(BaseModel):
     project_store: JupyterDeployProjectStoreV1 | None = Field(alias="project-store", default=None)
     components: dict[str, JupyterDeployComponentDefinitionV1] | None = None
     images: dict[str, JupyterDeployImageDefinitionV1] | None = None
+    volumes: JupyterDeployVolumesV1 | None = None
     health: JupyterDeployHealthV1 | None = None
     open: JupyterDeployOpenV1 | None = None
 
@@ -483,6 +600,16 @@ class JupyterDeployManifestV1(BaseModel):
         command = next((cmd for cmd in (self.commands or []) if cmd.cmd == cmd_name), None)
         return command is not None
 
+    def supports_volume_readiness(self) -> bool:
+        """Return True if the template can be asked whether its volume backups are safe to restore from.
+
+        The contract is the presence of the ``volume.validate-backups-ready`` command, which gates on the
+        host being stopped and refuses if any backup predates the last shutdown. A template that omits it
+        declares that restoring its volumes is always safe -- so the check is skipped rather than guessed
+        at, and `jd config --restore-volumes` proceeds straight to resolving the ids.
+        """
+        return self.has_command(VOLUME_READINESS_COMMAND)
+
     def supports_proxy(self) -> bool:
         """Return True if the template supports the local client proxy.
 
@@ -550,6 +677,16 @@ class JupyterDeployManifestV1(BaseModel):
         if not self.images:
             raise CommandNotImplementedError("image")
         return self.images
+
+    def get_volumes(self) -> JupyterDeployVolumesV1:
+        """Return the volumes declaration.
+
+        Raises:
+            CommandNotImplementedError if the template declares no volumes.
+        """
+        if not self.volumes:
+            raise CommandNotImplementedError("volume")
+        return self.volumes
 
     def get_image(self, name: str) -> JupyterDeployImageDefinitionV1:
         """Return a single image definition by name.

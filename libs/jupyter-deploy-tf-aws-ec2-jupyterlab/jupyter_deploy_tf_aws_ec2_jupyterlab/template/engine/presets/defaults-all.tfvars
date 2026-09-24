@@ -17,3 +17,4 @@ log_files_retention_days   = 180
 custom_tags                = {}
 additional_ebs_mounts      = []
 additional_efs_mounts      = []
+ebs_snapshot_ids           = {}

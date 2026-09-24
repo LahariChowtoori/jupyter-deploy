@@ -18,6 +18,7 @@ required_sensitive:
 overrides:
   # uncomment and change a value to override the default
   # ami_id: null
+  # availability_zone: any
   # custom_tags: {}
   # iam_role_prefix: Jupyter-deploy-ec2-base
   # instance_type: t3.medium
@@ -36,3 +37,4 @@ overrides:
   # volume_type: gp3
   # additional_ebs_mounts: []
   # additional_efs_mounts: []
+  # ebs_snapshot_ids: {}

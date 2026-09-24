@@ -6,6 +6,7 @@ from jupyter_deploy.constants import MASKED_SECRET_VALUE
 from jupyter_deploy.engine.supervised_execution import NullDisplay
 from jupyter_deploy.enum import StoreType
 from jupyter_deploy.exceptions import (
+    BackupsNotReadyError,
     CommandNotImplementedError,
     InvalidPresetError,
     ProjectStoreNotFoundError,
@@ -689,6 +690,133 @@ class TestConfigHandler(unittest.TestCase):
         # Should return immediately without error
         handler.restore_secrets()
 
+    @patch("jupyter_deploy.handlers.project.config_handler.VolumeHandler")
+    @patch("jupyter_deploy.handlers.base_project_handler.retrieve_project_manifest")
+    @patch("jupyter_deploy.engine.terraform.tf_config.TerraformConfigHandler")
+    def test_restore_volumes_writes_the_backup_map_to_the_declared_variable(
+        self,
+        mock_tf_handler: Mock,
+        mock_retrieve_manifest: Mock,
+        mock_volume_handler_class: Mock,
+    ) -> None:
+        """The map lands in the TEMPLATE VARIABLE, resolved through the values: entry.
+
+        Two indirections, and the test pins both: the volumes declaration names a values: entry
+        (`volume_backup_ids`), and that entry names the terraform variable (`ebs_snapshot_ids`). Writing
+        the values-entry name instead would produce a variable terraform has never heard of, and the
+        restore would silently recreate every volume EMPTY.
+        """
+        manifest_data = {
+            "schema_version": 1,
+            "template": {"name": "test", "engine": "terraform", "version": "1.0.0"},
+            "values": [{"name": "volume_backup_ids", "source": "variable", "source-key": "ebs_snapshot_ids"}],
+        }
+        mock_retrieve_manifest.return_value = JupyterDeployManifestV1(**manifest_data)  # type: ignore
+
+        tf_mock_handler_instance, _ = self.get_mock_handler_and_fns()
+        mock_tf_handler.return_value = tf_mock_handler_instance
+
+        mock_volume_handler_class.return_value.resolve_backup_ids.return_value = (
+            "volume_backup_ids",
+            {"home": "snap-1", "home/external-ebs1": "snap-2"},
+        )
+
+        handler = ConfigHandler(display_manager=NullDisplay())
+        handler.restore_volumes()
+
+        expected = {"ebs_snapshot_ids": {"home": "snap-1", "home/external-ebs1": "snap-2"}}
+        variables_handler = tf_mock_handler_instance.variables_handler
+        # BOTH writes, in the order `ManifestCommandRunner.update_variables` uses. The record write is
+        # what validates the map against the variable's declared type, so dropping it would defer a
+        # malformed value to plan time, where it reads as a template bug rather than a bad restore.
+        variables_handler.update_variable_records.assert_called_once_with(expected)
+        variables_handler.sync_project_variables_config.assert_called_once_with(expected)
+        self.assertLess(
+            variables_handler.method_calls.index(("update_variable_records", (expected,), {})),
+            variables_handler.method_calls.index(("sync_project_variables_config", (expected,), {})),
+        )
+
+    @patch("jupyter_deploy.handlers.project.config_handler.VolumeHandler")
+    @patch("jupyter_deploy.handlers.base_project_handler.retrieve_project_manifest")
+    @patch("jupyter_deploy.engine.terraform.tf_config.TerraformConfigHandler")
+    def test_restore_volumes_propagates_a_missing_backup(
+        self,
+        mock_tf_handler: Mock,
+        mock_retrieve_manifest: Mock,
+        mock_volume_handler_class: Mock,
+    ) -> None:
+        """A partial restore recreates the unbacked volumes empty, so nothing may be written."""
+        mock_retrieve_manifest.return_value = self.mock_manifest
+        tf_mock_handler_instance, _ = self.get_mock_handler_and_fns()
+        mock_tf_handler.return_value = tf_mock_handler_instance
+
+        mock_volume_handler_class.return_value.resolve_backup_ids.side_effect = BackupsNotReadyError(
+            "no backup exists for home/external-ebs1",
+            volume_names=["home/external-ebs1"],
+            hint="Run 'jd volume backup --all' first.",
+        )
+
+        handler = ConfigHandler(display_manager=NullDisplay())
+        with self.assertRaises(BackupsNotReadyError):
+            handler.restore_volumes()
+
+        tf_mock_handler_instance.variables_handler.sync_project_variables_config.assert_not_called()
+        tf_mock_handler_instance.variables_handler.update_variable_records.assert_not_called()
+
+    @patch("jupyter_deploy.handlers.project.config_handler.VolumeHandler")
+    @patch("jupyter_deploy.handlers.base_project_handler.retrieve_project_manifest")
+    @patch("jupyter_deploy.engine.terraform.tf_config.TerraformConfigHandler")
+    def test_restore_volumes_creates_no_backups_itself(
+        self,
+        mock_tf_handler: Mock,
+        mock_retrieve_manifest: Mock,
+        mock_volume_handler_class: Mock,
+    ) -> None:
+        """`jd config` must stay free of cloud side effects: it READS backups, never takes one.
+
+        Taking a snapshot here would make planning create billable resources, which is exactly why
+        `jd volume backup` is a separate explicit command.
+        """
+        manifest_data = {
+            "schema_version": 1,
+            "template": {"name": "test", "engine": "terraform", "version": "1.0.0"},
+            "values": [{"name": "volume_backup_ids", "source": "variable", "source-key": "ebs_snapshot_ids"}],
+        }
+        mock_retrieve_manifest.return_value = JupyterDeployManifestV1(**manifest_data)  # type: ignore
+        tf_mock_handler_instance, _ = self.get_mock_handler_and_fns()
+        mock_tf_handler.return_value = tf_mock_handler_instance
+
+        volume_handler = mock_volume_handler_class.return_value
+        volume_handler.resolve_backup_ids.return_value = ("volume_backup_ids", {"home": "snap-1"})
+
+        ConfigHandler(display_manager=NullDisplay()).restore_volumes()
+
+        volume_handler.backup_volume.assert_not_called()
+        volume_handler.backup_all.assert_not_called()
+
+    @patch("jupyter_deploy.handlers.project.config_handler.VolumeHandler")
+    @patch("jupyter_deploy.handlers.base_project_handler.retrieve_project_manifest")
+    @patch("jupyter_deploy.engine.terraform.tf_config.TerraformConfigHandler")
+    def test_restore_volumes_raises_when_the_values_entry_is_undeclared(
+        self,
+        mock_tf_handler: Mock,
+        mock_retrieve_manifest: Mock,
+        mock_volume_handler_class: Mock,
+    ) -> None:
+        """A backups-map naming no values: entry cannot be resolved to a variable."""
+        mock_retrieve_manifest.return_value = self.mock_manifest
+        tf_mock_handler_instance, _ = self.get_mock_handler_and_fns()
+        mock_tf_handler.return_value = tf_mock_handler_instance
+
+        mock_volume_handler_class.return_value.resolve_backup_ids.return_value = ("not_declared", {"home": "snap-1"})
+
+        handler = ConfigHandler(display_manager=NullDisplay())
+        with self.assertRaises(NotImplementedError):
+            handler.restore_volumes()
+
+        tf_mock_handler_instance.variables_handler.sync_project_variables_config.assert_not_called()
+        tf_mock_handler_instance.variables_handler.update_variable_records.assert_not_called()
+
     @patch("jupyter_deploy.handlers.base_project_handler.retrieve_project_manifest")
     @patch("jupyter_deploy.engine.terraform.tf_config.TerraformConfigHandler")
     def test_reset_variables_delegates_to_variables_handler(
@@ -703,4 +831,82 @@ class TestConfigHandler(unittest.TestCase):
 
         tf_mock_handler_instance.variables_handler.reset_specific_variables.assert_called_once_with(
             ["domain", "custom_tags"]
+        )
+
+
+class TestRestoreVolumesValidatesFirst(unittest.TestCase):
+    """`restore_volumes` points the template's variable at a backup, which REPLACES the volume.
+
+    So the readiness check belongs inside it, before anything is written: once the variable names a
+    backup, the next apply rebuilds the volume from it and reports success either way.
+    """
+
+    @staticmethod
+    def _handler(engine: Mock) -> ConfigHandler:
+        with patch.object(ConfigHandler, "__init__", lambda self, display_manager: None):
+            handler = ConfigHandler(display_manager=Mock())  # type: ignore[call-arg]
+        handler.display_manager = Mock()
+        handler._handler = engine
+        handler.project_manifest = Mock()  # type: ignore[assignment]
+        handler.project_manifest.get_declared_value.return_value = Mock(source_key="ebs_snapshot_ids")
+        return handler
+
+    def test_validates_before_resolving(self) -> None:
+        """Order is the assertion: a refused run must not have rewritten the project's variables."""
+        engine = Mock()
+        handler = self._handler(engine)
+        calls: list[str] = []
+        volume_handler = Mock()
+
+        def record_validate() -> None:
+            calls.append("validate")
+
+        def record_resolve() -> tuple[str, dict[str, str]]:
+            calls.append("resolve")
+            return ("map", {})
+
+        volume_handler.validate_backups_ready.side_effect = record_validate
+        volume_handler.resolve_backup_ids.side_effect = record_resolve
+
+        with patch(
+            "jupyter_deploy.handlers.project.config_handler.VolumeHandler",
+            Mock(return_value=volume_handler),
+        ):
+            handler.restore_volumes()
+
+        self.assertEqual(calls, ["validate", "resolve"])
+
+    def test_a_failed_check_writes_nothing(self) -> None:
+        engine = Mock()
+        handler = self._handler(engine)
+        volume_handler = Mock()
+        volume_handler.validate_backups_ready.side_effect = BackupsNotReadyError("stale")
+
+        with (
+            patch(
+                "jupyter_deploy.handlers.project.config_handler.VolumeHandler",
+                Mock(return_value=volume_handler),
+            ),
+            self.assertRaises(BackupsNotReadyError),
+        ):
+            handler.restore_volumes()
+
+        volume_handler.resolve_backup_ids.assert_not_called()
+        engine.variables_handler.sync_project_variables_config.assert_not_called()
+        engine.variables_handler.update_variable_records.assert_not_called()
+
+    def test_a_passing_check_resolves_and_writes(self) -> None:
+        engine = Mock()
+        handler = self._handler(engine)
+        volume_handler = Mock()
+        volume_handler.resolve_backup_ids.return_value = ("map", {"home": "snap-1"})
+
+        with patch(
+            "jupyter_deploy.handlers.project.config_handler.VolumeHandler",
+            Mock(return_value=volume_handler),
+        ):
+            handler.restore_volumes()
+
+        engine.variables_handler.sync_project_variables_config.assert_called_once_with(
+            {"ebs_snapshot_ids": {"home": "snap-1"}}
         )

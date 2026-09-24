@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
+import pytest
+
 import pytest_jupyter_deploy
 from pytest_jupyter_deploy import constants
-from pytest_jupyter_deploy.plugin import handle_browser_context_args
+from pytest_jupyter_deploy.plugin import _reject_cli_mutating, handle_browser_context_args
 
 
 def test_version_available() -> None:
@@ -154,3 +156,36 @@ def test_handle_browser_args_noop_when_auth_file_is_missing(tmp_path: Path) -> N
 
     # Should return base args unchanged (no storage_state added)
     assert result == base_args
+
+
+class TestRejectCliMutating:
+    """`cli` promises "safe for release validation"; `mutating` promises the opposite."""
+
+    @staticmethod
+    def _item(*markers: str) -> Any:
+        return Mock(nodeid="tests/e2e/test_x.py::test_y", keywords={m: True for m in markers})
+
+    def test_a_test_with_both_markers_fails_collection(self) -> None:
+        with pytest.raises(pytest.UsageError) as excinfo:
+            _reject_cli_mutating([self._item("cli", "mutating")])
+
+        assert "test_y" in str(excinfo.value)
+        assert "must not change the deployment" in str(excinfo.value)
+
+    def test_each_marker_alone_is_fine(self) -> None:
+        _reject_cli_mutating([self._item("cli"), self._item("mutating"), self._item()])
+
+    def test_every_offender_is_listed(self) -> None:
+        """One message naming all of them, so a bulk mis-marking is fixed in one pass."""
+        items = [
+            Mock(nodeid="a::t1", keywords={"cli": True, "mutating": True}),
+            Mock(nodeid="b::t2", keywords={"cli": True}),
+            Mock(nodeid="c::t3", keywords={"cli": True, "mutating": True}),
+        ]
+        with pytest.raises(pytest.UsageError) as excinfo:
+            _reject_cli_mutating(items)
+
+        message = str(excinfo.value)
+        assert "a::t1" in message
+        assert "c::t3" in message
+        assert "b::t2" not in message

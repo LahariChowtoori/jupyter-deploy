@@ -60,6 +60,7 @@ jobs:
 
       - name: Build CLI E2E image (bare)
         run: |
+          set -o pipefail
           ECR_URL=$(just ci-e2e-base-ecr-url 2)
           BUILD_ARGS="--build-arg INSTALL_MODE=pypi"
           BUILD_ARGS="$BUILD_ARGS --build-arg INSTALL_VARIANT=bare"
@@ -119,6 +120,7 @@ jobs:
 
       - name: Build CLI E2E image (aws)
         run: |
+          set -o pipefail
           ECR_URL=$(just ci-e2e-base-ecr-url 2)
           BUILD_ARGS="--build-arg INSTALL_MODE=pypi"
           BUILD_ARGS="$BUILD_ARGS --build-arg INSTALL_VARIANT=aws"
@@ -178,6 +180,7 @@ jobs:
 
       - name: Build CLI E2E image (aws-k8s)
         run: |
+          set -o pipefail
           ECR_URL=$(just ci-e2e-base-ecr-url 2)
           BUILD_ARGS="--build-arg INSTALL_MODE=pypi"
           BUILD_ARGS="$BUILD_ARGS --build-arg INSTALL_VARIANT=aws-k8s"
@@ -237,6 +240,7 @@ jobs:
 
       - name: Build CLI E2E image (aws-proxy)
         run: |
+          set -o pipefail
           ECR_URL=$(just ci-e2e-base-ecr-url 2)
           BUILD_ARGS="--build-arg INSTALL_MODE=pypi"
           BUILD_ARGS="$BUILD_ARGS --build-arg INSTALL_VARIANT=aws-proxy"
@@ -482,7 +486,7 @@ jobs:
       - name: Generate .env
         run: >-
           just env-setup-base sandbox-e2e sandbox-ci 2
-          "safe-user=ellisonbg,org=jupyter-infra,safe-org=jupyter-server,team=jupyter-deploy-e2e-app-access,safe-team=jupyter-deploy-e2e-app-no-access,larger-instance=t3.xlarge,larger-log-retention-days=270,cpu-instance=t3.medium,gpu-instance=g6.xlarge"
+          "safe-user=ellisonbg,org=jupyter-infra,safe-org=jupyter-server,team=jupyter-deploy-e2e-app-access,safe-team=jupyter-deploy-e2e-app-no-access,larger-instance=t3.xlarge,larger-log-retention-days=270,gpu-instance=g5.xlarge"
 
       - name: Pull aws image
         run: just ci-e2e-cli-pull aws

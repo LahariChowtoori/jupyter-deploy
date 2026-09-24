@@ -13,7 +13,17 @@ on:
         type: string
         default: ""
       test-file-filter:
-        description: "Per-job test file filter (e.g. test_external_volumes)"
+        description: "Per-job test file filter (e.g. test_volume_swaps). Prefer `marker`."
+        required: false
+        type: string
+        default: ""
+      marker:
+        description: "Pytest -m marker expression (empty = the suite default, `e2e`)"
+        required: false
+        type: string
+        default: ""
+      artifact-name:
+        description: "Suffix for this job's test-results artifact (must be unique within a run)"
         required: false
         type: string
         default: ""
@@ -85,7 +95,7 @@ jobs:
       - name: Generate .env
         run: >-
           just env-setup-base sandbox-e2e sandbox-ci ${{ inputs.oauth-app-num }}
-          "safe-user=ellisonbg,org=jupyter-infra,safe-org=jupyter-server,team=jupyter-deploy-e2e-app-access,safe-team=jupyter-deploy-e2e-app-no-access,larger-instance=t3.xlarge,larger-log-retention-days=270,cpu-instance=t3.medium,gpu-instance=g6.xlarge"
+          "safe-user=ellisonbg,org=jupyter-infra,safe-org=jupyter-server,team=jupyter-deploy-e2e-app-access,safe-team=jupyter-deploy-e2e-app-no-access,larger-instance=t3.xlarge,larger-log-retention-days=270,gpu-instance=g5.xlarge,alt-availability-zone=us-west-2b"
 
       - name: Import auth state
         run: just auth-import sandbox-ci
@@ -123,6 +133,11 @@ jobs:
           if [ -n "${{ inputs.ecr-tag }}" ]; then
             OPTIONS="skip-sync=true,${OPTIONS}"
           fi
+          # `marker=` goes LAST: the justfile matches it with `marker=[^,]+`, so anything appended
+          # after a comma would truncate an expression like `mutating and not gpu`.
+          if [ -n "${{ inputs.marker }}" ]; then
+            OPTIONS="${OPTIONS},marker=${{ inputs.marker }}"
+          fi
           echo "options=${OPTIONS}" >> "$GITHUB_OUTPUT"
 
       - name: Run E2E tests
@@ -136,7 +151,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ inputs.test-file-filter || 'non-mutating' }}
+          name: test-results-${{ inputs.artifact-name || inputs.test-file-filter || 'non-mutating' }}
           path: test-results/
           if-no-files-found: ignore
 

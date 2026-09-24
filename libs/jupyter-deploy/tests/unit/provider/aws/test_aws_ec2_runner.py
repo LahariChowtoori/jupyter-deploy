@@ -1,4 +1,6 @@
+import json
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import ANY, Mock, patch
 
 from jupyter_deploy.api.aws.ec2 import ec2_instance
@@ -536,6 +538,78 @@ class TestWaitForState(unittest.TestCase):
         mock_poll_for_instance_status.assert_called_once()
 
 
+class TestVerifyInstanceStopped(unittest.TestCase):
+    """A gate instruction: it returns the state, or raises so no later step in the sequence runs."""
+
+    @staticmethod
+    def _args() -> dict[str, ResolvedInstructionArgument]:
+        return {"instance_id": StrResolvedInstructionArgument(argument_name="instance_id", value="i-123")}
+
+    @patch("boto3.client")
+    @patch("jupyter_deploy.api.aws.ec2.ec2_instance.verify_instance_stopped")
+    def test_reports_the_state_when_stopped(self, mock_verify: Mock, mock_boto: Mock) -> None:
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        mock_verify.return_value = Ec2InstanceState.STOPPED
+
+        result = runner._verify_instance_stopped(resolved_arguments=self._args())
+
+        mock_verify.assert_called_once_with(runner.client, instance_id="i-123")
+        self.assertEqual(result["InstanceStateName"].value, "stopped")
+
+    @patch("boto3.client")
+    @patch("jupyter_deploy.api.aws.ec2.ec2_instance.verify_instance_stopped")
+    def test_propagates_the_refusal(self, mock_verify: Mock, mock_boto: Mock) -> None:
+        """The raise IS the mechanism: run_command_sequence stops, so create-snapshot never happens."""
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        mock_verify.side_effect = IncompatibleHostStateError("still running", hint="Run 'jd host stop'")
+
+        with self.assertRaises(IncompatibleHostStateError):
+            runner.execute_instruction(
+                instruction_name=AwsEc2Instruction.VERIFY_INSTANCE_STOPPED,
+                resolved_arguments=self._args(),
+            )
+
+
+class TestDescribeVolumes(unittest.TestCase):
+    """The translation seam: AWS field names in, provider-neutral ones out."""
+
+    @staticmethod
+    def _run(volumes: list[dict]) -> dict:
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        with patch(
+            "jupyter_deploy.api.aws.ec2.ebs_volume.describe_volumes_by_tags",
+            Mock(return_value=volumes),
+        ):
+            results = runner.execute_instruction(
+                instruction_name=AwsEc2Instruction.DESCRIBE_VOLUMES,
+                resolved_arguments={
+                    "filter_DeploymentId": StrResolvedInstructionArgument(
+                        argument_name="filter_DeploymentId", value="dep-1"
+                    )
+                },
+            )
+        payload: dict = json.loads(results["Volumes"].value)[0]
+        return payload
+
+    @patch("boto3.client")
+    def test_size_becomes_a_capacity_quantity(self, mock_boto: Mock) -> None:
+        payload = self._run([{"VolumeId": "vol-1", "Size": 30, "State": "in-use"}])
+        self.assertEqual(payload["capacity"], "30Gi")
+        self.assertEqual(payload["state"], "attached")
+
+    @patch("boto3.client")
+    def test_capacity_is_absent_when_aws_reported_no_size(self, mock_boto: Mock) -> None:
+        """Omitted rather than "0Gi": a missing size is not a volume of size zero."""
+        payload = self._run([{"VolumeId": "vol-1", "State": "available"}])
+        self.assertNotIn("capacity", payload)
+        self.assertEqual(payload["state"], "detached")
+
+    @patch("boto3.client")
+    def test_used_is_never_reported(self, mock_boto: Mock) -> None:
+        """EBS exposes no used-bytes API; consumption belongs to a filesystem-stats verb of its own."""
+        self.assertNotIn("used", self._run([{"VolumeId": "vol-1", "Size": 30}]))
+
+
 class TestExecuteInstructions(unittest.TestCase):
     def test_all_instructions_implemented(self) -> None:
         # Setup
@@ -550,6 +624,13 @@ class TestExecuteInstructions(unittest.TestCase):
             patch.object(runner, "_reboot_instance", return_value={}),
             patch.object(runner, "_wait_for_state", return_value={}),
             patch.object(runner, "_resolve_endpoint", return_value={}),
+            patch.object(runner, "_verify_instance_stopped", return_value={}),
+            patch.object(runner, "_create_snapshot", return_value={}),
+            patch.object(runner, "_wait_snapshot_completed", return_value={}),
+            patch.object(runner, "_describe_snapshots", return_value={}),
+            patch.object(runner, "_delete_snapshot", return_value={}),
+            patch.object(runner, "_describe_volumes", return_value={}),
+            patch.object(runner, "_verify_instance_stopped_since", return_value={}),
         ]
 
         instruction_method_map = {
@@ -560,6 +641,13 @@ class TestExecuteInstructions(unittest.TestCase):
             AwsEc2Instruction.WAIT_FOR_RUNNING: "_wait_for_state",
             AwsEc2Instruction.WAIT_FOR_STOPPED: "_wait_for_state",
             AwsEc2Instruction.RESOLVE_ENDPOINT: "_resolve_endpoint",
+            AwsEc2Instruction.VERIFY_INSTANCE_STOPPED: "_verify_instance_stopped",
+            AwsEc2Instruction.CREATE_SNAPSHOT: "_create_snapshot",
+            AwsEc2Instruction.WAIT_SNAPSHOT_COMPLETED: "_wait_snapshot_completed",
+            AwsEc2Instruction.DESCRIBE_SNAPSHOTS: "_describe_snapshots",
+            AwsEc2Instruction.DELETE_SNAPSHOT: "_delete_snapshot",
+            AwsEc2Instruction.DESCRIBE_VOLUMES: "_describe_volumes",
+            AwsEc2Instruction.VERIFY_INSTANCE_STOPPED_SINCE: "_verify_instance_stopped_since",
         }
 
         # Guard: the map must cover every enum member so new instructions are exercised here.
@@ -711,3 +799,75 @@ class TestResolveEndpoint(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             runner._resolve_endpoint(resolved_arguments=resolved_args)
+
+
+class TestVerifyInstanceStoppedSince(unittest.TestCase):
+    """A gate step: it returns nothing and refuses by raising, like `verify-instance-stopped`."""
+
+    @staticmethod
+    def _args(timestamps: str) -> dict[str, ResolvedInstructionArgument]:
+        return {
+            "instance_id": StrResolvedInstructionArgument(argument_name="instance_id", value="i-1"),
+            "timestamps": StrResolvedInstructionArgument(argument_name="timestamps", value=timestamps),
+        }
+
+    @patch("boto3.client")
+    def test_returns_no_results(self, mock_boto: Mock) -> None:
+        """Nothing to report: a caller that only proceeds on success needs the refusal, not a value."""
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        with patch("jupyter_deploy.api.aws.ec2.ec2_instance.verify_instance_stopped_since", Mock()):
+            results = runner.execute_instruction(
+                instruction_name=AwsEc2Instruction.VERIFY_INSTANCE_STOPPED_SINCE,
+                resolved_arguments=self._args("2026-09-17T15:00:00+00:00"),
+            )
+
+        self.assertEqual(results, {})
+
+    @patch("boto3.client")
+    def test_the_refusal_propagates(self, mock_boto: Mock) -> None:
+        """The sequence must stop here, so nothing downstream runs against unproven backups."""
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        with (
+            patch(
+                "jupyter_deploy.api.aws.ec2.ec2_instance.verify_instance_stopped_since",
+                Mock(side_effect=IncompatibleHostStateError("ran since")),
+            ),
+            self.assertRaises(IncompatibleHostStateError),
+        ):
+            runner.execute_instruction(
+                instruction_name=AwsEc2Instruction.VERIFY_INSTANCE_STOPPED_SINCE,
+                resolved_arguments=self._args("2026-09-17T13:00:00+00:00"),
+            )
+
+    @patch("boto3.client")
+    def test_parses_a_comma_separated_list_of_instants(self, mock_boto: Mock) -> None:
+        """Every backup goes in at once, so the weakest one decides in a single call."""
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        verify: Mock = Mock()
+        with patch("jupyter_deploy.api.aws.ec2.ec2_instance.verify_instance_stopped_since", verify):
+            runner.execute_instruction(
+                instruction_name=AwsEc2Instruction.VERIFY_INSTANCE_STOPPED_SINCE,
+                resolved_arguments=self._args("2026-09-17T15:00:00+00:00, 2026-09-17T16:00:00+00:00"),
+            )
+
+        self.assertEqual(
+            verify.call_args.kwargs["since"],
+            [datetime(2026, 9, 17, 15, 0, 0, tzinfo=UTC), datetime(2026, 9, 17, 16, 0, 0, tzinfo=UTC)],
+        )
+
+    @patch("boto3.client")
+    def test_unparseable_instants_are_dropped_rather_than_guessed(self, mock_boto: Mock) -> None:
+        """A junk entry must not become a date.
+
+        Dropping it can only make this step pass more easily, which is why the CALLER refuses when a
+        backup has no usable timestamp — this step never sees the difference.
+        """
+        runner = AwsEc2Runner(NullDisplay(), region_name="us-west-2")
+        verify: Mock = Mock()
+        with patch("jupyter_deploy.api.aws.ec2.ec2_instance.verify_instance_stopped_since", verify):
+            runner.execute_instruction(
+                instruction_name=AwsEc2Instruction.VERIFY_INSTANCE_STOPPED_SINCE,
+                resolved_arguments=self._args("not-a-date,2026-09-17T15:00:00+00:00"),
+            )
+
+        self.assertEqual(verify.call_args.kwargs["since"], [datetime(2026, 9, 17, 15, 0, 0, tzinfo=UTC)])

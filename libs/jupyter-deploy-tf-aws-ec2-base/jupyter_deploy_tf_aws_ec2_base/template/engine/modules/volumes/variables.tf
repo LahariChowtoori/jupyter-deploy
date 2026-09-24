@@ -33,6 +33,17 @@ variable "additional_efs_mounts" {
   type        = list(map(string))
 }
 
+variable "subnet_id" {
+  description = <<-EOT
+    Subnet to place the EFS mount targets in -- the SAME subnet the instance uses.
+
+    Passed in rather than looked up here. A lookup by availability zone alone can match a subnet in
+    a different VPC than the security group, and EFS rejects that with
+    "SecurityGroupNotFound: You have specified two resources that belong to different networks".
+  EOT
+  type        = string
+}
+
 variable "availability_zone" {
   description = "Availability zone of the EC2 instance where to create the EBS volumes."
   type        = string
@@ -46,4 +57,16 @@ variable "instance_id" {
 variable "efs_security_group_id" {
   description = "ID of the security group for EFS mount targets."
   type        = string
+}
+
+variable "ebs_snapshot_ids" {
+  description = <<-EOT
+    Map of volume name -> EBS snapshot id to create that volume from.
+
+    Keys are mount PATHS, not the "name" field of an additional_ebs_mounts entry: "home" is the jupyter
+    data volume, and every additional EBS mount is "home/<mount_point>". An absent key means an empty
+    volume, so a key that matches nothing silently restores nothing -- which is why the module refuses
+    a key it does not recognize at plan time.
+  EOT
+  type        = map(string)
 }

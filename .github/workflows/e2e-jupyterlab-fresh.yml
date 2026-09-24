@@ -2,9 +2,14 @@ name: E2E jupyterlab template (fresh deploy)
 
 # Builds the E2E image, then fresh-deploys the aws-ec2-jupyterlab template, runs the
 # E2E suite against it, and tears it down. Three entry points share this workflow:
-# a proxy/template release gate (workflow_call, pypi install), manual dispatch, and
-# (later) a weekly canary. jupyterlab needs only AWS creds — no OAuth app / subdomain
-# / cert quota — so it fresh-deploys and destroys on every run (no persistent slot).
+# a proxy/template release gate (workflow_call, pypi install), manual dispatch, and the
+# weekly canary (e2e-jupyterlab-canary.yml, which dispatches this file at the release
+# tag). jupyterlab needs only AWS creds — no OAuth app / subdomain / cert quota — so it
+# fresh-deploys on every run (no persistent slot).
+#
+# Teardown happens only when every test job passes: a FAILED run leaves the deployment up so a
+# flaky test can be retried against it with "re-run failed jobs". e2e-reap-stale.yml is what
+# stops that from leaking — it destroys any e2e deployment older than 12h.
 on:
   workflow_call:
     inputs:
@@ -19,7 +24,7 @@ on:
         type: string
         default: ""
       destroy-after:
-        description: "Destroy the deployment after tests (best-effort; also on failure)"
+        description: "Destroy the deployment when every test job passes (a failure leaves it up for retry)"
         required: false
         type: boolean
         default: true
@@ -57,10 +62,27 @@ on:
         type: string
         default: ""
       destroy-after:
-        description: "Destroy the deployment after tests pass"
+        description: "Destroy the deployment when every test job passes (a failure leaves it up for retry)"
         required: false
         type: boolean
         default: true
+      install-mode:
+        description: "Install mode: workspace (default) or pypi (from package index)"
+        required: false
+        type: choice
+        options: ["workspace", "pypi"]
+        default: "workspace"
+      install-variant:
+        description: "Install variant when install-mode=pypi: release (default) or canary"
+        required: false
+        type: choice
+        options: ["release", "canary"]
+        default: "release"
+      pkg-version:
+        description: "Package version to pin (release: from the extra index; canary: from prod PyPI, empty = latest)"
+        required: false
+        type: string
+        default: ""
       ref:
         description: "Git ref to checkout (e.g. refs/pull/185/merge for a fork PR)"
         required: false
@@ -189,16 +211,20 @@ jobs:
       ref: ${{ inputs.ref }}
       timeout-minutes: 120
 
-  # Job 3 — the mutating pass: ONE job, two in-place `jd up` cycles on the SAME deployment
-  # (uv/CPU -> pixi/GPU+volumes -> uv/CPU). One job rather than the base template's five,
-  # because what is under test is the transition, not the end state — see
-  # tests/e2e/test_mutating_gpu_pixi.py. It runs after the non-mutating pass because the two
-  # applies leave the deployment on a different configuration than it was deployed with.
+  # Job 3 — apply #1, ISOLATED because it is the one that fails for reasons that are not ours.
+  # A GPU instance type is refused for lack of capacity (`InsufficientInstanceCapacity`) often
+  # enough that it dominates this workflow's flake rate, and no AWS API reports capacity ahead of
+  # time — see the g5-vs-g6 evidence in tests/e2e/configurations/env.example and #374.
   #
-  # Appended to the serial chain deliberately: a second deployment per configuration would be
-  # cheaper in wall clock but would never exercise a swap.
-  test-mutating:
-    name: "Mutating tests"
+  # Its own job so that "re-run failed jobs" retries ONLY this, instead of redoing the
+  # non-mutating pass that already passed. Deliberately still BLOCKING (no continue-on-error): a
+  # real GPU regression must red the run, and the retry path is what makes the flake affordable.
+  #
+  # Ordered first among the mutating jobs and cannot be reordered: apply #2 transitions
+  # pixi -> uv, which is only meaningful after apply #1 put the deployment on pixi. So an ICE here
+  # still blocks the job below — the split buys retry granularity, not independence.
+  test-gpu:
+    name: "Mutating tests (GPU swap)"
     needs: [build-image, deploy, test]
     if: needs.test.result == 'success'
     uses: ./.github/workflows/e2e-jupyterlab-job.yml
@@ -207,20 +233,56 @@ jobs:
       ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
       ecr-slot: ${{ inputs.ecr-slot }}
       deployment-id: ${{ needs.deploy.outputs.deployment-id }}
-      test-filter: "test_mutating"
+      marker: "gpu"
       mutate: true
-      job-name: "Mutating tests"
+      job-name: "Mutating tests (GPU swap)"
       ref: ${{ inputs.ref }}
       timeout-minutes: 120
 
-  # Job 4 — teardown. Runs even if any earlier job failed (best-effort), as long as a
-  # deployment id was emitted, so a fresh run never inherits leaked infrastructure. This is
-  # load-bearing for the mutating pass in particular: a GPU capacity failure mid-apply leaves
-  # the deployment on a half-applied config, with a GPU instance billing until it is reaped.
+  # Job 4 — every other mutating test, on the SAME deployment: apply #2 (GPU/pixi -> CPU/uv) and
+  # apply #3 (the availability-zone swap that preserves volume data).
+  #
+  # Selected by marker rather than by file, so `mutating and not gpu` picks up any mutating test
+  # added later without touching this workflow. Split from the GPU job only so a GPU capacity flake
+  # does not discard them. test_volume_swaps is the one file here that IS a valid
+  # standalone entry point (its volumes_provisioned fixture provisions what it needs), so it can be
+  # promoted to its own job later without touching the tests.
+  test-mutating:
+    name: "Mutating tests (CPU swap + volumes)"
+    needs: [build-image, deploy, test, test-gpu]
+    if: needs.test-gpu.result == 'success'
+    uses: ./.github/workflows/e2e-jupyterlab-job.yml
+    secrets: inherit
+    with:
+      ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
+      ecr-slot: ${{ inputs.ecr-slot }}
+      deployment-id: ${{ needs.deploy.outputs.deployment-id }}
+      marker: "mutating and not gpu"
+      mutate: true
+      job-name: "Mutating tests (CPU swap + volumes)"
+      ref: ${{ inputs.ref }}
+      timeout-minutes: 120
+
+  # Job 5 — teardown, ONLY when everything passed.
+  #
+  # A failed run deliberately LEAVES the deployment up, so a flaky test can be retried with
+  # "re-run failed jobs" against the same infrastructure instead of paying a fresh deploy, and so
+  # the failure can be inspected live. That is a change from tearing down unconditionally.
+  #
+  # The cost of that choice is a deployment nobody is watching — a GPU instance mid-flake bills
+  # until it is reaped — so it is only safe BECAUSE of e2e-reap-stale.yml, which destroys any
+  # e2e deployment older than 12h. Do not tighten this condition without checking the reaper still
+  # runs, and do not loosen the reaper without reverting this.
   destroy:
     name: "Teardown deployment"
-    needs: [build-image, deploy, test, test-mutating]
-    if: always() && inputs.destroy-after && needs.deploy.outputs.deployment-id != ''
+    needs: [build-image, deploy, test, test-gpu, test-mutating]
+    if: >-
+      always() && inputs.destroy-after
+      && needs.deploy.outputs.deployment-id != ''
+      && needs.deploy.result == 'success'
+      && needs.test.result == 'success'
+      && needs.test-gpu.result == 'success'
+      && needs.test-mutating.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: e2e

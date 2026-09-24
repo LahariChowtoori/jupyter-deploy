@@ -15,6 +15,8 @@ from jupyter_deploy.exceptions import (
     SecretNotFoundError,
 )
 from jupyter_deploy.manifest import (
+    VOLUME_READINESS_COMMAND,
+    VOLUME_SHOW_COMMAND,
     InvalidServiceError,
     JupyterDeployComponentDefinitionV1,
     JupyterDeployFlagV1,
@@ -513,3 +515,231 @@ class TestManifestOpen(unittest.TestCase):
     def test_unknown_open_mode_falls_back_to_url(self) -> None:
         manifest = self._manifest({"mode": "carrier-pigeon"})
         self.assertEqual(manifest.get_open().get_mode(), OpenMode.URL)
+
+
+class TestJupyterDeployManifestV1Volumes(unittest.TestCase):
+    def _make_manifest(self, volumes: dict[str, Any] | None = None) -> JupyterDeployManifestV1:
+        data: dict[str, Any] = {
+            "schema_version": 1,
+            "template": {"name": "test-template", "engine": "terraform", "version": "1.0.0"},
+        }
+        if volumes is not None:
+            data["volumes"] = volumes
+        return JupyterDeployManifestV1(**data)  # type: ignore
+
+    def test_get_volumes_parses_static_and_dynamic(self) -> None:
+        manifest = self._make_manifest(
+            volumes={
+                "static": [
+                    {
+                        "name": "home",
+                        "type": "ebs",
+                        "mount-point": "/home/jovyan",
+                        "description": "home volume",
+                        "volume-id-value": "data_volume_id",
+                        "backups-map": "volume_backup_ids",
+                    }
+                ],
+                "dynamic": [
+                    {
+                        "group": "additional-ebs",
+                        "type": "ebs",
+                        "inventory-value": "additional_ebs_volumes",
+                        "name-path": ".name",
+                        "mount-point-path": ".mount_point",
+                        "volume-id-path": ".volume_id",
+                        "description-path": ".mount_point",
+                        "backups-map": "volume_backup_ids",
+                    }
+                ],
+            }
+        )
+
+        volumes = manifest.get_volumes()
+
+        self.assertEqual(volumes.static[0].name, "home")
+        self.assertEqual(volumes.static[0].mount_point, "/home/jovyan")
+        self.assertEqual(volumes.static[0].volume_id_value, "data_volume_id")
+        self.assertEqual(volumes.dynamic[0].group, "additional-ebs")
+        self.assertEqual(volumes.dynamic[0].inventory_value, "additional_ebs_volumes")
+        self.assertEqual(volumes.dynamic[0].name_path, ".name")
+
+    def test_get_volumes_raises_when_the_template_declares_none(self) -> None:
+        """`jd volume` must fail with "not implemented for this template", not an empty list."""
+        with self.assertRaises(CommandNotImplementedError):
+            self._make_manifest().get_volumes()
+
+    def test_static_and_dynamic_both_default_to_empty(self) -> None:
+        volumes = self._make_manifest(volumes={"static": [], "dynamic": []}).get_volumes()
+
+        self.assertEqual(volumes.static, [])
+        self.assertEqual(volumes.dynamic, [])
+
+    def test_a_kind_without_a_backups_map_parses_to_empty(self) -> None:
+        """Omitting backups-map declares "this kind has no backup mechanism"; it must not be required."""
+        volumes = self._make_manifest(
+            volumes={
+                "dynamic": [
+                    {
+                        "group": "additional-efs",
+                        "type": "efs",
+                        "inventory-value": "additional_efs_volumes",
+                        "name-path": ".name",
+                        "volume-id-path": ".volume_id",
+                    }
+                ]
+            }
+        ).get_volumes()
+
+        self.assertEqual(volumes.dynamic[0].backups_map, "")
+
+    def test_optional_paths_default_to_empty(self) -> None:
+        volumes = self._make_manifest(
+            volumes={
+                "dynamic": [
+                    {
+                        "group": "g",
+                        "inventory-value": "v",
+                        "name-path": ".name",
+                        "volume-id-path": ".volume_id",
+                    }
+                ]
+            }
+        ).get_volumes()
+
+        self.assertEqual(volumes.dynamic[0].mount_point_path, "")
+        self.assertEqual(volumes.dynamic[0].description_path, "")
+        self.assertEqual(volumes.dynamic[0].type, "")
+
+    def test_static_volume_id_value_is_required(self) -> None:
+        """There is no sensible default: without it the volume has no id to resolve."""
+        with self.assertRaises(ValidationError):
+            self._make_manifest(volumes={"static": [{"name": "home"}]})
+
+    def test_dynamic_inventory_value_and_name_path_are_required(self) -> None:
+        with self.assertRaises(ValidationError):
+            self._make_manifest(volumes={"dynamic": [{"group": "g", "volume-id-path": ".volume_id"}]})
+
+    def test_declaration_order_is_preserved(self) -> None:
+        """The FIRST static entry is the default `--name`, so ordering is part of the contract."""
+        volumes = self._make_manifest(
+            volumes={
+                "static": [
+                    {"name": "home", "volume-id-value": "a"},
+                    {"name": "scratch", "volume-id-value": "b"},
+                ]
+            }
+        ).get_volumes()
+
+        self.assertEqual([v.name for v in volumes.static], ["home", "scratch"])
+
+    def test_a_duplicated_static_name_is_refused(self) -> None:
+        """The name keys the backups map, so a duplicate restores one volume from another's backup."""
+        with self.assertRaises(ValidationError) as ctx:
+            self._make_manifest(
+                volumes={
+                    "static": [
+                        {"name": "home", "volume-id-value": "a"},
+                        {"name": "home", "volume-id-value": "b"},
+                    ]
+                }
+            )
+
+        self.assertIn("static name", str(ctx.exception))
+        self.assertIn("home", str(ctx.exception))
+
+    def test_a_duplicated_group_is_refused(self) -> None:
+        with self.assertRaises(ValidationError) as ctx:
+            self._make_manifest(
+                volumes={
+                    "dynamic": [
+                        {"group": "extra", "inventory-value": "v1", "name-path": ".name", "volume-id-path": ".id"},
+                        {"group": "extra", "inventory-value": "v2", "name-path": ".name", "volume-id-path": ".id"},
+                    ]
+                }
+            )
+
+        self.assertIn("group", str(ctx.exception))
+        self.assertIn("extra", str(ctx.exception))
+
+    def test_every_duplicated_name_is_named_at_once(self) -> None:
+        """One message listing all of them, so a bulk mis-declaration is fixed in one pass."""
+        with self.assertRaises(ValidationError) as ctx:
+            self._make_manifest(
+                volumes={
+                    "static": [
+                        {"name": "home", "volume-id-value": "a"},
+                        {"name": "home", "volume-id-value": "b"},
+                        {"name": "scratch", "volume-id-value": "c"},
+                        {"name": "scratch", "volume-id-value": "d"},
+                        {"name": "cache", "volume-id-value": "e"},
+                    ]
+                }
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("home", message)
+        self.assertIn("scratch", message)
+        self.assertNotIn("cache", message)
+
+    def test_a_name_repeated_three_times_is_reported_once(self) -> None:
+        """The count is not the point; a reader needs the offending name, not how often it appears."""
+        with self.assertRaises(ValidationError) as ctx:
+            self._make_manifest(
+                volumes={
+                    "static": [
+                        {"name": "home", "volume-id-value": "a"},
+                        {"name": "home", "volume-id-value": "b"},
+                        {"name": "home", "volume-id-value": "c"},
+                    ]
+                }
+            )
+
+        self.assertEqual(str(ctx.exception).count("'home'"), 1)
+
+    def test_a_static_name_may_equal_a_group(self) -> None:
+        """Two namespaces: a group labels a set, a static name identifies one volume."""
+        volumes = self._make_manifest(
+            volumes={
+                "static": [{"name": "home", "volume-id-value": "a"}],
+                "dynamic": [{"group": "home", "inventory-value": "v", "name-path": ".name", "volume-id-path": ".id"}],
+            }
+        ).get_volumes()
+
+        self.assertEqual(volumes.static[0].name, "home")
+        self.assertEqual(volumes.dynamic[0].group, "home")
+
+
+class TestJupyterDeployManifestV1VolumeReadiness(unittest.TestCase):
+    """Declaring the command is the opt-in; there is no schema field for it.
+
+    Same contract as `supports_proxy`: presence of a named command, not a flag. That keeps the four command
+    names this feature runs consistent -- the other three are literals in the handler too -- and leaves a
+    template no way to half-declare the check.
+    """
+
+    @staticmethod
+    def _manifest(commands: list[dict[str, Any]]) -> JupyterDeployManifestV1:
+        data: dict[str, Any] = {
+            "schema_version": 1,
+            "template": {"name": "test-template", "engine": "terraform", "version": "1.0.0"},
+            "volumes": {"static": [{"name": "home", "volume-id-value": "v"}]},
+            "commands": commands,
+        }
+        return JupyterDeployManifestV1(**data)  # type: ignore[arg-type]
+
+    def test_declaring_the_command_opts_in(self) -> None:
+        manifest = self._manifest(
+            [{"cmd": VOLUME_READINESS_COMMAND, "sequence": [{"api-name": "aws.ec2.verify-instance-stopped"}]}]
+        )
+        self.assertTrue(manifest.supports_volume_readiness())
+
+    def test_omitting_it_opts_out(self) -> None:
+        """A template whose storage is always safe to restore is checked for nothing, not guessed at."""
+        # Another volume command, empty: only the command NAME decides this, so an instruction here would
+        # imply the sequence is consulted.
+        manifest = self._manifest([{"cmd": VOLUME_SHOW_COMMAND, "sequence": []}])
+        self.assertFalse(manifest.supports_volume_readiness())
+
+    def test_a_template_with_no_commands_opts_out(self) -> None:
+        self.assertFalse(self._manifest([]).supports_volume_readiness())

@@ -138,6 +138,14 @@ jobs:
     env:
       PKG_NAME: ${{ needs.build.outputs.pkg-name }}
       VERSION: ${{ needs.build.outputs.version }}
+      # Every extra this package declares. Installing the bare name proves only that the sdist
+      # resolves; an extra can name a dependency that does not exist on any index and still publish
+      # clean. Keep in sync with [project.optional-dependencies].
+      #
+      # NOTE: [proxy] resolves jupyter-deploy-client-proxy from an index, so a CLI release whose
+      # [proxy] floor is not published yet fails here. That is the intended signal -- publish the
+      # proxy first -- not a reason to drop the extra.
+      INSTALL_EXTRAS: "[aws,k8s,proxy]"
     steps:
       - name: Setup UV
         uses: astral-sh/setup-uv@v3
@@ -159,12 +167,13 @@ jobs:
 
       - name: Test installation from Test PyPI
         run: |
+          set -o pipefail
           uv venv
           for i in 1 2; do
             if uv pip install \
               --extra-index-url https://test.pypi.org/simple/ \
               --index-strategy unsafe-best-match \
-              ${{ env.PKG_NAME }}==${{ env.VERSION }} 2>&1 | tee /tmp/install.log; then
+              "${PKG_NAME}${INSTALL_EXTRAS}==${VERSION}" 2>&1 | tee /tmp/install.log; then
               exit 0
             fi
             if ! grep -qi "No solution found\|no version of" /tmp/install.log; then

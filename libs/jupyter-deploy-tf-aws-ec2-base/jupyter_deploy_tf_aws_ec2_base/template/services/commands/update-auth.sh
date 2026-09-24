@@ -26,6 +26,35 @@ log_message() {
   echo "[$timestamp] $*" >> "$LOG_FILE"
 }
 
+# Second line of defence behind the SSM documents' allowedPattern (see engine/commands.tf).
+# The documents are the boundary that matters for `jd users`/`jd teams`, but this script is also
+# reachable by anyone who can run an arbitrary shell command on the host, and these values are
+# written into /etc/AUTHED_ENTITIES with sed -- so reject anything that is not a bare name list
+# here too rather than trusting the caller. Charset is the union of what GitHub allows in a login
+# ([A-Za-z0-9-]) and in a team slug ([A-Za-z0-9._-]), plus the comma separator.
+#
+# Both argument positions are checked, because the org form carries its name in $2 rather than $3:
+#   update-auth.sh users|teams <action> <values>   -> the names are in $3 ($2 is allowlisted below)
+#   update-auth.sh org <name>                      -> the name is in $2
+reject_unless_bare_names() {
+    case "$1" in
+        *[!a-zA-Z0-9,._-]*)
+            ERROR="Error: invalid characters in '$1'. Expected a comma-separated list of GitHub names."
+            log_message "$ERROR"
+            echo "$ERROR"
+            exit 1
+            ;;
+    esac
+}
+
+if [ -n "$VALUES" ]; then
+    reject_unless_bare_names "$VALUES"
+fi
+
+if [ "$ENTITY_TYPE" == "org" ] && [ -n "$ACTION" ] && [ "$ACTION" != "remove" ]; then
+    reject_unless_bare_names "$ACTION"
+fi
+
 # Ensure the file exists in case it was manually deleted
 touch "$AUTHED_ENTITIES_FILE"
 
@@ -72,6 +101,10 @@ check_would_remove_all_auth() {
             fi
             ;;
         "users")
+            if [ "$action" == "set" ]; then
+                # `set` replaces the section outright, so the simulated result is simply the input.
+                users_content="$values"
+            fi
             if [ "$action" == "remove" ]; then
                 IFS=',' read -ra input_values <<< "$values"
                 IFS=',' read -ra current_values <<< "$users_content"
@@ -126,6 +159,12 @@ if [ "$ACTION" == "remove" ]; then
         check_would_remove_all_auth "$ENTITY_TYPE" "$ACTION" "$VALUES"
     fi
     # Note: teams are irrelevant: they only apply if an organization is set
+elif [ "$ACTION" == "set" ] && [ "$ENTITY_TYPE" == "users" ]; then
+    # `set` can empty the user list just as `remove` can, and leaving no users and no org opens the app
+    # to every GitHub account -- oauth2-proxy treats empty allowlists as "no restriction". The GitOps
+    # path cannot reach this state (the `local.github_auth_valid` precondition in engine/services.tf
+    # refuses such a plan), but this script is also reachable directly over SSM, so it checks too.
+    check_would_remove_all_auth "$ENTITY_TYPE" "$ACTION" "$VALUES"
 fi
 
 if [ "$ENTITY_TYPE" == "org" ]; then
@@ -155,7 +194,11 @@ if [ "$ENTITY_TYPE" == "org" ]; then
     fi
 
 elif [ "$ENTITY_TYPE" == "users" ] || [ "$ENTITY_TYPE" == "teams" ]; then
-    if [ -z "$ACTION" ] || [ -z "$VALUES" ]; then
+    # `set` with no values means "this section should be empty", which is how the GitOps path expresses
+    # a cleared allowlist variable: the caller knows what the list should become, not what it currently
+    # is, so it cannot express the change as a `remove` of specific names. `add`/`remove` still require
+    # values -- for those, an empty list is a caller bug, not an intent.
+    if [ -z "$ACTION" ] || { [ -z "$VALUES" ] && [ "$ACTION" != "set" ]; }; then
         ERROR="Error: Missing required parameters."
         log_message "$ERROR"
         echo $ERROR

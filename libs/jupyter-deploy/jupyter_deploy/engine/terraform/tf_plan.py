@@ -63,7 +63,11 @@ def format_terraform_value(value: Any) -> str:
 
         out = ["{"]
         for key, val in value.items():
-            out.append(f"{key} = {format_terraform_value(val)}")
+            # Keys are QUOTED, always. HCL allows a bare key only when it is a valid identifier, so a
+            # bare `home` happens to work while `home/external-ebs1` parses as an expression and fails
+            # the plan with "Variables not allowed" — a map key is data, not an identifier, and nothing
+            # here constrains what a template may use as one.
+            out.append(f"{format_terraform_value(str(key))} = {format_terraform_value(val)}")
         out.append("}")
         return "\n".join(out)
     else:

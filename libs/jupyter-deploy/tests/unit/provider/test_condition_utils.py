@@ -92,6 +92,59 @@ class TestEvaluateFlagIn(unittest.TestCase):
             )
 
 
+def _kind_flag() -> JupyterDeployFlagV1:
+    return JupyterDeployFlagV1.model_validate(
+        {
+            "name": "is-efs",
+            "conditions": [
+                {
+                    "left": {"source": "cli", "source-key": "name"},
+                    "operator": "equals",
+                    "right": {"source": "literal", "value": "efs"},
+                }
+            ],
+        }
+    )
+
+
+class TestEvaluateFlagEquals(unittest.TestCase):
+    def test_equals_true_on_an_exact_match(self) -> None:
+        result = condition_utils.evaluate_flag(
+            _kind_flag(), output_defs={}, cli_paramdefs=_cli("efs"), resolved_resultdefs={}
+        )
+        self.assertTrue(result)
+
+    def test_equals_is_case_sensitive(self) -> None:
+        result = condition_utils.evaluate_flag(
+            _kind_flag(), output_defs={}, cli_paramdefs=_cli("EFS"), resolved_resultdefs={}
+        )
+        self.assertFalse(result)
+
+    def test_equals_false_on_a_different_value(self) -> None:
+        result = condition_utils.evaluate_flag(
+            _kind_flag(), output_defs={}, cli_paramdefs=_cli("ebs"), resolved_resultdefs={}
+        )
+        self.assertFalse(result)
+
+    def test_list_operand_raises_rather_than_comparing_across_types(self) -> None:
+        flag = JupyterDeployFlagV1.model_validate(
+            {
+                "name": "bad",
+                "conditions": [
+                    {
+                        "left": {"source": "output", "source-key": "platform_mng_names"},
+                        "operator": "equals",
+                        "right": {"source": "literal", "value": "efs"},
+                    }
+                ],
+            }
+        )
+        with self.assertRaises(InvalidInstructionArgumentError):
+            condition_utils.evaluate_flag(
+                flag, output_defs=_outputs(["a"]), cli_paramdefs=_cli("x"), resolved_resultdefs={}
+            )
+
+
 class TestEvaluateWhen(unittest.TestCase):
     def test_plain_flag_returns_value(self) -> None:
         self.assertTrue(condition_utils.evaluate_when("is-mng", {"is-mng": True}))

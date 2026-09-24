@@ -2,7 +2,7 @@ schema_version: 1
 template:
   name: tf-aws-ec2-base
   engine: terraform
-  version: 0.5.3
+  version: 0.6.0
 requirements:
 - name: terraform
 - name: awscli
@@ -11,6 +11,18 @@ values:
 - name: deployment_id
   source: output
   source-key: deployment_id
+- name: jupyter_data_volume_id
+  source: output
+  source-key: jupyter_data_volume_id
+- name: additional_ebs_volumes
+  source: output
+  source-key: additional_ebs_volumes
+- name: additional_efs_volumes
+  source: output
+  source-key: additional_efs_volumes
+- name: volume_backup_ids
+  source: variable
+  source-key: ebs_snapshot_ids
 - name: open_url
   source: output
   source-key: jupyter_url
@@ -26,6 +38,37 @@ services:
 - jupyter
 - traefik
 - oauth
+volumes:
+  # Volume identity is the mount path the user sees in the app: `home`, `home/<mount_point>`.
+  # Every field below references a values: entry or a path -- no terraform identifiers appear here, so a
+  # differently-backed template declares new values: entries rather than new fields.
+  # `type` is the storage class, and it is what the live-state command branches on. The command itself is
+  # not named here: declaring `volume.show` / `volume.status` is what opts this template into reporting live state.
+  static:
+  - name: home
+    type: ebs
+    mount-point: /home/jovyan
+    description: Jupyter home volume
+    volume-id-value: jupyter_data_volume_id
+    backups-map: volume_backup_ids
+  dynamic:
+  - group: additional-ebs
+    type: ebs
+    inventory-value: additional_ebs_volumes
+    name-path: .name
+    mount-point-path: .mount_point
+    volume-id-path: .volume_id
+    description-path: .mount_point
+    backups-map: volume_backup_ids
+  # No backups-map: EFS is regional, so a zone change only relocates its mount target, and its backups
+  # would be a separate service. Listed for visibility.
+  - group: additional-efs
+    type: efs
+    inventory-value: additional_efs_volumes
+    name-path: .name
+    mount-point-path: .mount_point
+    volume-id-path: .volume_id
+    description-path: .mount_point
 secrets:
 - name: oauth_app_client_secret
   source: output
@@ -464,6 +507,196 @@ commands:
   - result-name: secret-value
     source: result
     source-key: '[0].SecretString'
+- cmd: volume.show
+  # Backs `jd volume show`. Declared separately from volume.status below, which is byte-identical
+  # HERE only because one DescribeVolumes answers both questions on AWS -- core asks for the two by
+  # different keys so a provider whose detail and state come from different APIs can diverge them.
+  #
+  # One sequence for every storage kind this template mounts: the caller says which kind it
+  # is asking about (the `type` its volumes: entry declares) and the matching branch answers, so the
+  # CLI never learns that a block volume and a file system are two different APIs.
+  flags:
+  - name: is-efs
+    conditions:
+    - left:
+        source: cli
+        source-key: volume_type
+      operator: equals
+      right:
+        source: literal
+        value: efs
+  sequence:
+  - api-name: aws.ec2.describe-volumes        # [0] block volumes: discovered by tag
+    when: "!is-efs"
+    # Tag keys are declared HERE, not in the CLI: this template owns its tagging convention, and
+    # DeploymentId is the same key every other resource of the deployment carries.
+    arguments:
+    - api-attribute: filter_DeploymentId
+      source: output
+      source-key: deployment_id
+  - api-name: aws.efs.describe-file-systems   # [1] file systems: asked for by id
+    when: is-efs
+    arguments:
+    # EFS has no tag filter on DescribeFileSystems, so the ids come from the caller, which already
+    # knows them from the template's inventory.
+    - api-attribute: file_system_ids
+      source: cli
+      source-key: volume_ids
+  - api-name: core.coalesce-str               # [2] whichever branch ran
+    arguments:
+    - api-attribute: value_1
+      source: result
+      source-key: '[0].Volumes'
+    - api-attribute: value_2
+      source: result
+      source-key: '[1].FileSystems'
+  results:
+  - result-name: volume.show.volumes
+    source: result
+    source-key: '[2].Value'
+- cmd: volume.status
+  # Backs `jd volume status`, which reduces this to a single word. Same sequence as volume.show above:
+  # see the note there for why the duplication is deliberate rather than an oversight.
+  #
+  # One sequence for every storage kind this template mounts: the caller says which kind it
+  # is asking about (the `type` its volumes: entry declares) and the matching branch answers, so the
+  # CLI never learns that a block volume and a file system are two different APIs.
+  flags:
+  - name: is-efs
+    conditions:
+    - left:
+        source: cli
+        source-key: volume_type
+      operator: equals
+      right:
+        source: literal
+        value: efs
+  sequence:
+  - api-name: aws.ec2.describe-volumes        # [0] block volumes: discovered by tag
+    when: "!is-efs"
+    # Tag keys are declared HERE, not in the CLI: this template owns its tagging convention, and
+    # DeploymentId is the same key every other resource of the deployment carries.
+    arguments:
+    - api-attribute: filter_DeploymentId
+      source: output
+      source-key: deployment_id
+  - api-name: aws.efs.describe-file-systems   # [1] file systems: asked for by id
+    when: is-efs
+    arguments:
+    # EFS has no tag filter on DescribeFileSystems, so the ids come from the caller, which already
+    # knows them from the template's inventory.
+    - api-attribute: file_system_ids
+      source: cli
+      source-key: volume_ids
+  - api-name: core.coalesce-str               # [2] whichever branch ran
+    arguments:
+    - api-attribute: value_1
+      source: result
+      source-key: '[0].Volumes'
+    - api-attribute: value_2
+      source: result
+      source-key: '[1].FileSystems'
+  results:
+  - result-name: volume.status.volumes
+    source: result
+    source-key: '[2].Value'
+- cmd: volume.backups
+  sequence:
+  - api-name: aws.ec2.describe-snapshots
+    arguments:
+    - api-attribute: filter_DeploymentId
+      source: output
+      source-key: deployment_id
+  results:
+  - result-name: volume.backups.backups
+    source: result
+    source-key: '[0].Snapshots'
+- cmd: volume.validate-backups-ready
+  # DECLARING this command is what opts the template into the readiness check -- there is no `volumes:` key
+  # for it. Restoring a volume from a backup REPLACES it (snapshot_id forces replacement), so a backup that
+  # predates the user's last session silently discards everything written in it; a template that omits this
+  # command is asserting that restoring its storage is always safe.
+  #
+  # Two gates, no results: the command either returns or refuses. It establishes that the host has been
+  # stopped continuously since every backup a restore would use, which means nothing can have been written
+  # to the volumes since, which means those backups hold everything.
+  #
+  # The instants come from the caller, which is what makes the step reusable: it compares timestamps
+  # against a shutdown and knows nothing about what they mean. A template whose readiness means something
+  # else declares a different command here.
+  #
+  # [0] first because a running host cannot answer the question at all, and its refusal names the one
+  # thing the user has to do before anything else can be established.
+  sequence:
+  - api-name: aws.ec2.verify-instance-stopped
+    arguments:
+    - api-attribute: instance_id
+      source: output
+      source-key: instance_id
+  - api-name: aws.ec2.verify-instance-stopped-since
+    arguments:
+    - api-attribute: instance_id
+      source: output
+      source-key: instance_id
+    - api-attribute: timestamps
+      source: cli
+      source-key: backup_timestamps
+- cmd: volume.backup
+  sequence:
+  # [0] Gate, not a step that does work: raises unless the host is stopped, and the sequence stops on
+  # the raise so nothing below runs. A snapshot of a live disk is crash-consistent -- data still in the
+  # kernel's page cache never reaches the volume -- and it restores looking fine. Declared here rather
+  # than enforced in the CLI so a template whose storage does not need quiescing can leave it out.
+  - api-name: aws.ec2.verify-instance-stopped
+    arguments:
+    - api-attribute: instance_id
+      source: output
+      source-key: instance_id
+  - api-name: aws.ec2.create-snapshot
+    # A backup carries the same tags as the resources it protects, so it is discoverable by the same
+    # queries and reaped by the same DeploymentId filter on teardown.
+    arguments:
+    - api-attribute: volume_id
+      source: cli
+      source-key: volume_id
+    - api-attribute: tag_Source
+      source: literal
+      value: jupyter-deploy
+    - api-attribute: tag_Template
+      source: literal
+      value: tf-aws-ec2-base
+    - api-attribute: tag_DeploymentId
+      source: output
+      source-key: deployment_id
+    - api-attribute: volume_name
+      source: cli
+      source-key: volume_name
+  # Gate on the snapshot reaching `completed` before the caller deletes the one it supersedes: a
+  # half-written snapshot cannot seed a volume, so deleting the old one early would leave no usable
+  # backup at all.
+  - api-name: aws.ec2.wait-snapshot-completed
+    arguments:
+    - api-attribute: snapshot_id
+      source: result
+      source-key: '[1].SnapshotId'
+  results:
+  - result-name: volume.backup.backup_id
+    source: result
+    source-key: '[2].SnapshotId'
+  - result-name: volume.backup.state
+    source: result
+    source-key: '[2].State'
+- cmd: volume.delete-backup
+  sequence:
+  - api-name: aws.ec2.delete-snapshot
+    arguments:
+    - api-attribute: snapshot_id
+      source: cli
+      source-key: backup_id
+  results:
+  - result-name: volume.delete-backup.backup_id
+    source: result
+    source-key: '[0].SnapshotId'
 supervised-execution:
   config:
     config.terraform-plan:

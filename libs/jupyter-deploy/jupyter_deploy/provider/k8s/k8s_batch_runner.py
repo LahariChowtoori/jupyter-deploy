@@ -7,7 +7,6 @@ from kubernetes import client
 
 from jupyter_deploy import cmd_utils
 from jupyter_deploy.api.k8s import batch as k8s_batch
-from jupyter_deploy.api.k8s.utils import format_age
 from jupyter_deploy.engine.supervised_execution import DisplayManager
 from jupyter_deploy.enum import StatusCategory
 from jupyter_deploy.exceptions import InstructionError, InstructionNotFoundError
@@ -23,6 +22,7 @@ from jupyter_deploy.provider.resolved_resultdefs import (
     ResolvedInstructionResult,
     StrResolvedInstructionResult,
 )
+from jupyter_deploy.str_utils import format_age
 
 _EMPTY_SUB_COMPONENT = ""
 

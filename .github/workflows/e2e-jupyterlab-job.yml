@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: ""
+      marker:
+        description: "Pytest -m marker expression (empty = the suite default, `e2e`)"
+        required: false
+        type: string
+        default: ""
       mutate:
         description: "Include mutating tests (they run `jd config` + `jd up` against the deployment)"
         required: false
@@ -104,10 +109,15 @@ jobs:
       # Existing project + no --with-full-deployment ⇒ full_deployment tests auto-skip.
       # mutate=true additionally un-skips the @pytest.mark.mutating tests, which run
       # `jd config` + `jd up` in place against this same restored deployment.
+      # `marker=` goes LAST in the options string: the justfile reads it with `marker=[^,]+`, so a comma
+      # after it would truncate an expression like `mutating and not gpu`.
       - name: Run E2E tests
+        env:
+          MUTATE_OPT: ${{ inputs.mutate && ',mutate=true' || '' }}
+          MARKER_OPT: ${{ inputs.marker && format(',marker={0}', inputs.marker) || '' }}
         run: >-
           just test-e2e-jupyterlab ${{ inputs.project-dir }} "${{ inputs.test-filter }}"
-          "skip-sync=true${{ inputs.mutate && ',mutate=true' || '' }}"
+          "skip-sync=true$MUTATE_OPT$MARKER_OPT"
 
       - name: Upload test artifacts
         if: always()

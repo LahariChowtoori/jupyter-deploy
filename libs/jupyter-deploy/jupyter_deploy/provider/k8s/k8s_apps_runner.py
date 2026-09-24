@@ -4,7 +4,6 @@ from enum import Enum
 from kubernetes import client
 
 from jupyter_deploy.api.k8s import apps as k8s_apps
-from jupyter_deploy.api.k8s.utils import format_age
 from jupyter_deploy.engine.supervised_execution import DisplayManager
 from jupyter_deploy.enum import StatusCategory
 from jupyter_deploy.exceptions import InstructionNotFoundError
@@ -18,6 +17,7 @@ from jupyter_deploy.provider.resolved_resultdefs import (
     ResolvedInstructionResult,
     StrResolvedInstructionResult,
 )
+from jupyter_deploy.str_utils import format_age
 
 _EMPTY_SUB_COMPONENT = ""
 

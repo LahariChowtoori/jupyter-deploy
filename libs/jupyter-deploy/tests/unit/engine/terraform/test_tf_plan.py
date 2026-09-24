@@ -48,15 +48,62 @@ class TestFormatTerraformValue(unittest.TestCase):
 
     def test_dict_str_str_value(self) -> None:
         result = format_terraform_value({"key": "value"})
-        self.assertEqual(result, '{\nkey = "value"\n}')
+        self.assertEqual(result, '{\n"key" = "value"\n}')
 
     def test_dict_str_int_value(self) -> None:
         result = format_terraform_value({"key": 123})
-        self.assertEqual(result, "{\nkey = 123\n}")
+        self.assertEqual(result, '{\n"key" = 123\n}')
 
     def test_dict_str_float_value(self) -> None:
         result = format_terraform_value({"key": 1.23})
-        self.assertEqual(result, "{\nkey = 1.23\n}")
+        self.assertEqual(result, '{\n"key" = 1.23\n}')
+
+    def test_dict_key_needing_quotes(self) -> None:
+        """The regression: a bare `home/external-ebs1` parses as an expression, not a key.
+
+        Terraform fails the plan with "Variables not allowed" — so an unquoted key is not merely
+        untidy, it makes `jd config --restore-volumes` impossible for any volume below the top level.
+        """
+        result = format_terraform_value({"home": "snap-1", "home/external-ebs1": "snap-2"})
+        self.assertEqual(result, '{\n"home" = "snap-1"\n"home/external-ebs1" = "snap-2"\n}')
+
+    def test_dict_key_with_a_quote_is_escaped(self) -> None:
+        result = format_terraform_value({'we"ird': "v"})
+        self.assertEqual(result, '{\n"we\\"ird" = "v"\n}')
+
+    def test_dict_key_with_a_dot_is_quoted(self) -> None:
+        """A dotted key is not a valid bare identifier either — terraform reads it as an attribute."""
+        result = format_terraform_value({"a.b": "v"})
+        self.assertEqual(result, '{\n"a.b" = "v"\n}')
+
+    def test_dict_key_with_a_dash_is_quoted(self) -> None:
+        """`home-data` would parse as a subtraction."""
+        result = format_terraform_value({"home-data": "v"})
+        self.assertEqual(result, '{\n"home-data" = "v"\n}')
+
+    def test_non_string_dict_key_is_stringified_then_quoted(self) -> None:
+        """A YAML map can yield int keys; HCL keys are strings, so they must be rendered as such."""
+        result = format_terraform_value({1: "v"})
+        self.assertEqual(result, '{\n"1" = "v"\n}')
+
+    def test_nested_dict_keys_are_quoted_too(self) -> None:
+        result = format_terraform_value({"outer/a": {"inner/b": "v"}})
+        self.assertEqual(result, '{\n"outer/a" = {\n"inner/b" = "v"\n}\n}')
+
+    def test_dict_of_lists_quotes_the_keys(self) -> None:
+        result = format_terraform_value({"home/data": ["a"]})
+        self.assertEqual(result, '{\n"home/data" = [\n"a",\n]\n}')
+
+    def test_a_quoted_key_round_trips_through_terraform_parsing(self) -> None:
+        """The regression in one line: an unquoted `home/x` made terraform fail the whole plan with
+        `Error: Variables not allowed`, so `jd config --restore-volumes` could never restore a
+        non-top-level volume. Quoting is what makes the emitted tfvars parseable at all.
+        """
+        rendered = format_terraform_value({"home": "snap-1", "home/external-ebs1": "snap-2"})
+        for key in ('"home"', '"home/external-ebs1"'):
+            self.assertIn(f"{key} = ", rendered)
+        self.assertNotIn("\nhome = ", rendered)
+        self.assertNotIn("\nhome/external-ebs1 = ", rendered)
 
     def test_empty_dict_value(self) -> None:
         self.assertEqual(format_terraform_value({}), "{}")
@@ -137,8 +184,8 @@ class TestFormatPlanVariables(unittest.TestCase):
         self.assertIn("var_bool = true\n", result)
         self.assertIn("var_null = null\n", result)
         self.assertIn("var_empty_dict = {}\n", result)
-        self.assertIn('var_dict = {\nkey1 = "val1"\nkey2 = "val2"\n}\n', result)
-        self.assertIn("var_dict_int = {\nkey1 = 10\nkey2 = 11\n}\n", result)
+        self.assertIn('var_dict = {\n"key1" = "val1"\n"key2" = "val2"\n}\n', result)
+        self.assertIn('var_dict_int = {\n"key1" = 10\n"key2" = 11\n}\n', result)
         self.assertIn("var_empty_list = []\n", result)
         self.assertIn('var_list = [\n"a",\n"b",\n]\n', result)
 
@@ -170,8 +217,8 @@ class TestFormatValuesForDotTfvars(unittest.TestCase):
         self.assertIn("var_bool = true\n", result)
         self.assertIn("var_null = null\n", result)
         self.assertIn("var_empty_dict = {}\n", result)
-        self.assertIn('var_dict = {\nkey1 = "val1"\nkey2 = "val2"\n}\n', result)
-        self.assertIn("var_dict_int = {\nkey1 = 10\nkey2 = 11\n}\n", result)
+        self.assertIn('var_dict = {\n"key1" = "val1"\n"key2" = "val2"\n}\n', result)
+        self.assertIn('var_dict_int = {\n"key1" = 10\n"key2" = 11\n}\n', result)
         self.assertIn("var_empty_list = []\n", result)
         self.assertIn('var_list = [\n"a",\n"b",\n]\n', result)
 

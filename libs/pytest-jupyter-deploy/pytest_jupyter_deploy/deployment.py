@@ -529,18 +529,39 @@ class EndToEndDeployment:
             Keep value typed as Any instead of str to preserve proper YAML types.
             For example, passing int 50 writes as `50`, not `'50'` in YAML.
         """
+        self._update_variables_yaml_section("overrides", key, value)
+
+    def update_required_value(self, key: str, value: Any) -> None:
+        """Update a single value in variables.yaml's `required` section.
+
+        For variables a template declares as required rather than defaulted. Writing such a key
+        into `overrides` instead makes `jd config` fail with a definition conflict, so the section
+        a variable lives in is not interchangeable.
+
+        Prefer a `jd config` flag where one expresses the change. This exists for the values a flag
+        cannot reach: a list cannot be emptied by repeating its flag, and an empty string argument
+        does not round-trip.
+
+        Args:
+            key: The required key to update (e.g., "oauth_allowed_usernames")
+            value: The new value to set (any type - preserves int, str, bool, etc.)
+        """
+        self._update_variables_yaml_section("required", key, value)
+
+    def _update_variables_yaml_section(self, section: str, key: str, value: Any) -> None:
+        """Set one key inside one top-level section of variables.yaml, preserving comments."""
         variables_yaml = self.get_variables_yaml_path()
 
         # Read current config
         with open(variables_yaml) as f:
             config = yaml.safe_load(f)
 
-        # Ensure overrides section exists
-        if "overrides" not in config:
-            config["overrides"] = {}
+        # Ensure the target section exists
+        if section not in config:
+            config[section] = {}
 
         # Update the specific key
-        config["overrides"][key] = value
+        config[section][key] = value
 
         # Write back with comments preserved, using the correct format for the schema version
         schema_version = config.get("schema_version", 1)

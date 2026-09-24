@@ -4,6 +4,7 @@ from jupyter_deploy.engine.supervised_execution import DisplayManager
 from jupyter_deploy.exceptions import InstructionNotFoundError
 from jupyter_deploy.provider.aws.aws_ec2_runner import AwsEc2Runner
 from jupyter_deploy.provider.aws.aws_ecr_runner import AwsEcrRunner
+from jupyter_deploy.provider.aws.aws_efs_runner import AwsEfsRunner
 from jupyter_deploy.provider.aws.aws_eks_runner import AwsEksRunner
 from jupyter_deploy.provider.aws.aws_elbv2_runner import AwsElbv2Runner
 from jupyter_deploy.provider.aws.aws_error_handler import aws_error_context_manager
@@ -21,6 +22,7 @@ class AwsService(str, Enum):
 
     EC2 = "ec2"
     ECR = "ecr"
+    EFS = "efs"
     EKS = "eks"
     ELBV2 = "elbv2"
     INSPECTOR2 = "inspector2"
@@ -70,6 +72,10 @@ class AwsApiRunner(InstructionRunner):
             return service_runner
         elif service_name == AwsService.ECR:
             service_runner = AwsEcrRunner(self.display_manager, region_name=self.region_name)
+            self.service_runners[service_name] = service_runner
+            return service_runner
+        elif service_name == AwsService.EFS:
+            service_runner = AwsEfsRunner(self.display_manager, region_name=self.region_name)
             self.service_runners[service_name] = service_runner
             return service_runner
         elif service_name == AwsService.EKS:

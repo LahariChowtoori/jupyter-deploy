@@ -141,6 +141,13 @@ output "server_default_scope" {
   value       = var.workspace_rbac_namespaces[0]
 }
 
+output "acm_certificate_arn" {
+  description = "ARN of the ACM certificate for the deployment domain."
+  # Read through the validation resource, not the certificate: this way anything
+  # consuming the ARN is ordered after ACM has actually issued it.
+  value = aws_acm_certificate_validation.public.certificate_arn
+}
+
 output "load_balancer_tags" {
   description = "JSON-encoded tags used to look up the ingress load balancer via Resource Groups Tagging API."
   value = jsonencode({

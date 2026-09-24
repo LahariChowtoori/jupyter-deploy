@@ -49,6 +49,7 @@ class ConditionOperator(str, Enum):
     """Operators for command-level flag conditions."""
 
     IN = "in"
+    EQUALS = "equals"
 
     @classmethod
     def from_string(cls, source_str: str) -> "ConditionOperator":
@@ -107,6 +108,10 @@ class ValueSource(str, Enum):
     """Enum to list the possible sources for a declared value."""
 
     TEMPLATE_OUTPUT = "output"
+    # A value that lives in a template VARIABLE rather than an output. Needed for values the CLI writes
+    # as well as reads -- `jd config --restore-volumes` writes the volume backups map, and a variable is
+    # the only thing the CLI can write before a plan runs.
+    TEMPLATE_VARIABLE = "variable"
 
     @classmethod
     def from_string(cls, source_str: str) -> "ValueSource":

@@ -1,0 +1,98 @@
+name: E2E reap stale deployments
+
+# Destroys aws-ec2-jupyterlab E2E deployments that have been up for more than 12 hours.
+#
+# This exists because e2e-jupyterlab-fresh.yml deliberately LEAVES a failed run's deployment up, so
+# a flaky test can be retried against it with "re-run failed jobs" instead of paying a fresh deploy.
+# Without a reaper that policy is a leak: a GPU instance abandoned mid-flake bills until somebody
+# notices, and failures are exactly when nobody is watching. Do not weaken one without the other.
+#
+# Three conditions gate every teardown (see scripts/reap_stale_jupyterlab.py):
+#   1. the caller's credentials — this job assumes the E2E account role, so a developer's
+#      deployment in their own account is unreachable by construction, not by convention;
+#   2. the `Template=tf-aws-ec2-jupyterlab` tag — base, eks-oidc and `sandbox-ci` share the
+#      account under different templates and are never candidates;
+#   3. age > 12h, from the instance LaunchTime. An E2E run is capped at `timeout-minutes: 120`, so
+#      this threshold cannot catch a run in flight.
+#
+# Daily at 08:00 UTC = 03:00 EST (04:00 EDT — GitHub cron has no DST, so this drifts an hour in
+# summer; harmless for a cleanup job).
+#
+# Cost of daily rather than hourly: the reap window is the 12h threshold PLUS up to 24h waiting for
+# the next run, so a deployment abandoned just after a run can live ~36h. For a g5 GPU instance that
+# is roughly $36. Run this workflow manually (workflow_dispatch) after a known-bad CI run rather than
+# waiting, or shorten the interval if the bill says otherwise.
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      older-than-hours:
+        description: "Reap deployments whose instance launched more than this many hours ago"
+        required: false
+        type: string
+        default: "12"
+      dry-run:
+        description: "List what would be reaped without destroying anything"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+# One reaper at a time. Two concurrent runs would both discover the same stale deployment and race
+# on `jd down` over the same tfstate — the failure mode recorded in the project's own notes.
+concurrency:
+  group: e2e-reap-stale
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    name: "Reap stale E2E deployments"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: e2e
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install UV and Python
+        uses: ./.github/actions/install-uv
+        with:
+          python-version: "3.13"
+
+      - name: Install just
+        uses: ./.github/actions/install-just
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::997498698382:role/jupyter-infra-ci-e2e-6a3e2625
+          aws-region: us-west-2
+          role-duration-seconds: 7200
+
+      # Needed by find-takedown-jupyterlab: it restores each project from the S3 store, and the
+      # store credentials live in the CI project.
+      - name: Restore CI project
+        run: just ci-restore sandbox-ci
+
+      # Inputs travel through env rather than being interpolated into the script: only write-access
+      # actors can dispatch this, but a dispatch input expanded into a `run:` body is shell source,
+      # and this particular script destroys infrastructure.
+      - name: Reap stale deployments
+        env:
+          OLDER_THAN_HOURS: ${{ inputs.older-than-hours || '12' }}
+          DRY_RUN: ${{ inputs.dry-run && '--dry-run' || '' }}
+        run: |
+          just reap-stale-jupyterlab "$OLDER_THAN_HOURS" sandbox-e2e $DRY_RUN

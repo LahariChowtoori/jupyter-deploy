@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import time
+from datetime import UTC, datetime
 from enum import Enum
 
 from mypy_boto3_ec2.client import EC2Client
@@ -95,6 +97,11 @@ _INSTANCE_CODE_MAP: dict[Ec2InstanceState, int] = {
 }
 _INSTANCE_REVERSE_CODE_MAP: dict[int, Ec2InstanceState] = {v: k for k, v in _INSTANCE_CODE_MAP.items()}
 
+# EC2 states the stop instant only inside the human-readable StateTransitionReason, e.g.
+# "User initiated (2026-09-17 14:00:00 GMT)". Matched rather than parsed whole: the prefix varies by
+# shutdown cause, and some causes carry no timestamp at all.
+_STOP_TIME_PATTERN = re.compile(r"\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*GMT\)")
+
 # Terminal states to tolerate while polling, keyed by desired state.
 # After StartInstances the API may still report 'stopped' before transitioning to 'pending'.
 # After StopInstances the API may still report 'running' before transitioning to 'stopping'.
@@ -140,6 +147,129 @@ def describe_instance_status(
 
     instance_status: InstanceStatusTypeDef = {"InstanceState": instance.get("State", {})}
     return instance_status
+
+
+def get_instance_stop_time(ec2_client: EC2Client, instance_id: str) -> datetime | None:
+    """Return when the instance most recently stopped, or None when EC2 does not say.
+
+    EC2 reports this nowhere structured: the only source is `StateTransitionReason`, a
+    human-readable string such as `User initiated (2026-09-17 14:00:00 GMT)`. It is empty while the
+    instance runs, and not every shutdown reason carries a timestamp -- an instance-initiated
+    shutdown can report the reason alone. Callers must therefore treat None as "cannot be
+    established", never as "never stopped".
+
+    The value is always the LATEST stop, which is what makes it usable as a quiescence bound: a
+    backup taken after this instant, on an instance that is still stopped, cannot be missing a write.
+    That is the only provable no-data-loss condition available here -- EBS exposes no last-write
+    timestamp, and a backup's age says nothing about whether anything was written after it.
+
+    Raises:
+        ValueError: If the instance cannot be found.
+    """
+    request: DescribeInstancesRequestTypeDef = {"InstanceIds": [instance_id]}
+    response = ec2_client.describe_instances(**request)
+
+    reservations = response["Reservations"]
+    if not reservations:
+        raise ValueError("Instance not found: no reservation.")
+
+    instances = reservations[0].get("Instances", [])
+    if not instances:
+        raise ValueError("Instance not found in reservation")
+
+    match = _STOP_TIME_PATTERN.search(instances[0].get("StateTransitionReason", ""))
+    if not match:
+        return None
+
+    # EC2 renders the instant in GMT without an offset, so it is attached explicitly rather than left
+    # naive -- a naive value compared against an aware backup timestamp raises.
+    return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+
+
+def verify_instance_stopped_since(
+    ec2_client: EC2Client,
+    instance_id: str,
+    since: list[datetime],
+) -> None:
+    """Raise unless the instance has been stopped continuously since every instant in `since`.
+
+    A gate, like `verify_instance_stopped` above, and for the same reason: the caller wants to proceed
+    only if the answer is yes, so the refusal carries the explanation rather than making every caller
+    reconstruct one from a bool.
+
+    The property this establishes is that nothing can have been written to the instance's volumes since
+    the earliest of those instants -- a volume cannot change while the instance mounting it is stopped.
+    It is the only provable no-data-loss condition available: EBS exposes no last-write timestamp, and a
+    backup's AGE says nothing (a ten-minute-old backup of a volume written to five minutes ago is
+    useless; a month-old backup of an untouched volume is perfect).
+
+    An unknown stop time raises too. EC2 does not always report one, and for an operation that destroys
+    data "cannot establish" must resolve the same way as "not quiesced" -- never as a pass.
+
+    The comparison is strict: EC2 reports the stop to the second, so an instant equal to it cannot be
+    ordered against the flush that happened in that same second, and only one of those answers is safe.
+
+    Raises:
+        IncompatibleHostStateError: If the host has run since any of `since`, its stop time is unknown, or
+            `since` is empty -- an empty list is "nothing could be checked", never "checked and clean".
+        ValueError: If the instance cannot be found.
+    """
+    if not since:
+        # A gate that cannot tell "nothing to check" from "verified" is one refactor away from passing a
+        # restore it never examined. The caller drops unparseable instants, so an empty list here means
+        # every timestamp it had was unusable -- the opposite of proof.
+        raise IncompatibleHostStateError(
+            "No backup timestamps were supplied, so it cannot be established that the volumes have not "
+            "been written to since they were captured.",
+            hint="Take a fresh backup while the host is stopped, then retry.",
+        )
+
+    stop_time = get_instance_stop_time(ec2_client, instance_id=instance_id)
+
+    if stop_time is None:
+        raise IncompatibleHostStateError(
+            "The host reports no stop time, so it cannot be established that nothing was written to its "
+            "volumes since they were last captured.",
+            hint="Run 'jd host stop', wait for it to finish, take a fresh backup, then retry.",
+        )
+
+    stale = sorted(instant for instant in since if instant <= stop_time)
+    if stale:
+        raise IncompatibleHostStateError(
+            f"The host was running after {stale[0].isoformat()}, so anything written in that session is "
+            "not in what was captured then.",
+            hint="Take a fresh backup while the host is stopped, then retry.",
+        )
+
+
+def verify_instance_stopped(ec2_client: EC2Client, instance_id: str) -> Ec2InstanceState:
+    """Return the instance state, raising unless it is fully `stopped`.
+
+    A gate for operations that are only safe against a quiesced disk -- taking a volume backup, above
+    all. A snapshot of a running instance is crash-consistent: it captures whatever was on the block
+    device at that instant, so anything the kernel or the app still held in a page cache or a
+    write-ahead buffer is simply missing. The restore then looks fine and yields a corrupt notebook or
+    a truncated file, which is worse than a backup that refused to happen.
+
+    `stopping` is rejected along with `running`: the transition has begun but the flush has not
+    finished, so a snapshot taken there has the same problem.
+
+    Raises:
+        IncompatibleHostStateError: If the instance is in any state other than `stopped`.
+        ValueError: If the instance cannot be found.
+    """
+    status = describe_instance_status(ec2_client, instance_id=instance_id, check_status_first=False)
+    state = Ec2InstanceState.from_state_response(status.get("InstanceState", {}))
+
+    if state == Ec2InstanceState.STOPPED:
+        return state
+
+    raise IncompatibleHostStateError(
+        f"The host must be stopped for this operation, but it is '{state.value}'. A backup taken while "
+        "the disk is live is crash-consistent: data still buffered in memory is not on the volume, so "
+        "the restore can come back corrupt.",
+        hint="Run 'jd host stop', wait for it to finish, then retry.",
+    )
 
 
 def poll_for_instance_status(

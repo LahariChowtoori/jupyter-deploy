@@ -8,9 +8,11 @@ point; see ``constants.py`` and the header of ``test_mutating_gpu_pixi.py``.
 Also the return leg: the deployment must end back on a cheap CPU instance with uv, so a run that
 gets this far does not leave a GPU instance billing until the destroy job reaps it.
 
-Omitted: covered by the base template suite (`test_uv.py`, `test_external_volumes.py`)
-  The standalone "switch to uv" apply, and the per-volume file/directory operation matrices for
-  EBS and EFS (the same mount machinery ``test_home_volume.py`` covers for the home volume).
+Dropped deliberately: the per-volume file/directory operation matrices for EBS and EFS. They
+exercise the same mount machinery ``test_home_volume.py`` covers for the home volume, once per
+volume type. What survives is the write probe and `df` check in
+``test_external_volumes_ebs_and_efs_mounted`` below — the part that distinguishes a real mount from
+a directory that silently fell back to the root volume.
 """
 
 from pathlib import Path

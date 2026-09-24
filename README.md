@@ -4,6 +4,7 @@
 [![CI](https://github.com/jupyter-infra/jupyter-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/jupyter-infra/jupyter-deploy/actions/workflows/ci.yml)
 [![ec2-base-e2e](https://img.shields.io/github/actions/workflow/status/jupyter-infra/jupyter-deploy/e2e-base-canary.yml?label=ec2-base-e2e)](https://github.com/jupyter-infra/jupyter-deploy/actions/workflows/e2e-base-canary.yml)
 [![eks-oidc-e2e](https://img.shields.io/github/actions/workflow/status/jupyter-infra/jupyter-deploy/e2e-eks-oidc-canary.yml?label=eks-oidc-e2e)](https://github.com/jupyter-infra/jupyter-deploy/actions/workflows/e2e-eks-oidc-canary.yml)
+[![ec2-jupyterlab-e2e](https://img.shields.io/github/actions/workflow/status/jupyter-infra/jupyter-deploy/e2e-jupyterlab-canary.yml?label=ec2-jupyterlab-e2e)](https://github.com/jupyter-infra/jupyter-deploy/actions/workflows/e2e-jupyterlab-canary.yml)
 [![PyPI - jupyter-deploy](https://img.shields.io/pypi/v/jupyter-deploy?label=cli)](https://pypi.org/project/jupyter-deploy/)
 [![PyPI - ec2-base](https://img.shields.io/pypi/v/jupyter-deploy-tf-aws-ec2-base?label=ec2-base)](https://pypi.org/project/jupyter-deploy-tf-aws-ec2-base/)
 [![PyPI - eks-oidc](https://img.shields.io/pypi/v/jupyter-deploy-tf-aws-eks-oidc?label=eks-oidc)](https://pypi.org/project/jupyter-deploy-tf-aws-eks-oidc/)
@@ -50,7 +51,9 @@ jd --help
 ## Packages
 
 - [jupyter-deploy](./libs/jupyter-deploy/README.md): Core package providing the command line interface tool (CLI).
+- [jupyter-deploy-client-proxy](./libs/jupyter-deploy-client-proxy/README.md): The local reverse proxy to connect your web browser or desktop application to your remote deployment.
 - [jupyter-deploy-tf-aws-ec2-base](./libs/jupyter-deploy-tf-aws-ec2-base/README.md): A template to deploy a single JupyterLab app to an EC2 instance, serve it on your own domain and control access with GitHub identities.
+- [jupyter-deploy-tf-aws-ec2-jupyterlab](./libs/jupyter-deploy-tf-aws-ec2-jupyterlab/README.md): A template to deploy a single-user JupyterLab app to an EC2 instance, reached through the local client proxy and gated by your AWS identity.
 - [jupyter-deploy-tf-aws-eks-oidc](./libs/jupyter-deploy-tf-aws-eks-oidc/README.md): A template for multi-tenant JupyterLab or other interactive apps to an AWS EKS cluster, serve them on your own domain and control access with GitHub identities.
 - [jupyter-deploy-tf-aws-ec2-jupyterlab](./libs/jupyter-deploy-tf-aws-ec2-jupyterlab/README.md): A template to deploy a single-user JupyterLab app to an EC2 instance, accessed through a local proxy and authorized by your AWS identity; no domain or OAuth app required.
 - [jupyter-infra-tf-aws-iam-ci](./libs/jupyter-infra-tf-aws-iam-ci/README.md): The template to configure the AWS resources for the CI.

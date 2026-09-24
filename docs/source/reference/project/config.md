@@ -27,6 +27,7 @@ $ jd config [OPTIONS]
 * `--store-id <str>`: Pin a specific store.
 * `--restore-secrets`: Restore all masked secret variable value.
 * `--restore-secret <str>`: Restore the specific variable secret value.
+* `--restore-volumes`: Recreate storage volumes from their latest backup.
 * `--reset-store-id`: Clear the pinned store ID and rediscover the store.
 * `--reset-variable <str>`: Reset a variable to its default, or to null to trigger re-prompt.
 * `-v, --verbose`: Show full output without progress bar.

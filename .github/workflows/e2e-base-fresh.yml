@@ -28,7 +28,7 @@ on:
         type: string
         default: "release"
       pkg-version:
-        description: "Package version (required when install-mode=pypi, variant=release)"
+        description: "Package version to pin (release: from the extra index; canary: from prod PyPI, empty = latest)"
         required: false
         type: string
         default: ""
@@ -55,6 +55,23 @@ on:
         required: false
         type: boolean
         default: false
+      install-mode:
+        description: "Install mode: workspace (default) or pypi (from package index)"
+        required: false
+        type: choice
+        options: ["workspace", "pypi"]
+        default: "workspace"
+      install-variant:
+        description: "Install variant when install-mode=pypi: release (default) or canary"
+        required: false
+        type: choice
+        options: ["release", "canary"]
+        default: "release"
+      pkg-version:
+        description: "Package version to pin (release: from the extra index; canary: from prod PyPI, empty = latest)"
+        required: false
+        type: string
+        default: ""
       ref:
         description: "Git ref to checkout (e.g. refs/pull/185/merge for a fork PR)"
         required: false
@@ -169,7 +186,7 @@ jobs:
       - name: Generate .env (fresh deploy mode)
         run: >-
           just env-setup-base "" sandbox-ci ${{ inputs.oauth-app-num }}
-          "safe-user=ellisonbg,org=jupyter-infra,safe-org=jupyter-server,team=jupyter-deploy-e2e-app-access,safe-team=jupyter-deploy-e2e-app-no-access,larger-instance=t3.xlarge,larger-log-retention-days=270,cpu-instance=t3.medium,gpu-instance=g6.xlarge"
+          "safe-user=ellisonbg,org=jupyter-infra,safe-org=jupyter-server,team=jupyter-deploy-e2e-app-access,safe-team=jupyter-deploy-e2e-app-no-access,larger-instance=t3.xlarge,larger-log-retention-days=270,gpu-instance=g5.xlarge,availability-zone=us-west-2a,alt-availability-zone=us-west-2b"
 
       - name: Import auth state
         run: just auth-import sandbox-ci
@@ -231,8 +248,13 @@ jobs:
       ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
       timeout-minutes: 120
 
-  test-external-volumes:
-    name: "Mutating: external volumes"
+  # Mutating tests, selected by MARKER rather than by file: `mutating and not gpu` picks up any new
+  # mutating test automatically, where a per-file filter silently omits it. The GPU pass runs first
+  # and on its own -- it is the expensive one, and the later applies depend on the state it leaves
+  # (see libs/jupyter-deploy-tf-aws-ec2-base/tests/e2e/constants.py for the ordering contract).
+
+  test-gpu:
+    name: "Mutating tests (GPU swap)"
     needs: [build-image, test-non-mutating]
     uses: ./.github/workflows/e2e-base-job.yml
     secrets: inherit
@@ -241,40 +263,13 @@ jobs:
       test-filter: ${{ inputs.test-filter }}
       ref: ${{ inputs.ref }}
       ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
-      test-file-filter: test_external_volumes
+      marker: "gpu"
+      artifact-name: mutating-gpu
       mutate: true
-      timeout-minutes: 30
+      timeout-minutes: 90
 
-  test-config-apply:
-    name: "Mutating: config apply"
-    needs: [build-image, test-external-volumes]
-    uses: ./.github/workflows/e2e-base-job.yml
-    secrets: inherit
-    with:
-      oauth-app-num: ${{ inputs.oauth-app-num }}
-      test-filter: ${{ inputs.test-filter }}
-      ref: ${{ inputs.ref }}
-      ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
-      test-file-filter: test_config_apply
-      mutate: true
-      timeout-minutes: 30
-
-  test-gpu:
-    name: "Mutating: GPU"
-    needs: [build-image, test-config-apply]
-    uses: ./.github/workflows/e2e-base-job.yml
-    secrets: inherit
-    with:
-      oauth-app-num: ${{ inputs.oauth-app-num }}
-      test-filter: ${{ inputs.test-filter }}
-      ref: ${{ inputs.ref }}
-      ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
-      test-file-filter: test_gpu
-      mutate: true
-      timeout-minutes: 60
-
-  test-pixi:
-    name: "Mutating: pixi"
+  test-mutating:
+    name: "Mutating tests (CPU swap, allowlist, volumes)"
     needs: [build-image, test-gpu]
     uses: ./.github/workflows/e2e-base-job.yml
     secrets: inherit
@@ -283,23 +278,10 @@ jobs:
       test-filter: ${{ inputs.test-filter }}
       ref: ${{ inputs.ref }}
       ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
-      test-file-filter: test_pixi
+      marker: "mutating and not gpu"
+      artifact-name: mutating
       mutate: true
-      timeout-minutes: 60
-
-  test-uv:
-    name: "Mutating: uv"
-    needs: [build-image, test-pixi]
-    uses: ./.github/workflows/e2e-base-job.yml
-    secrets: inherit
-    with:
-      oauth-app-num: ${{ inputs.oauth-app-num }}
-      test-filter: ${{ inputs.test-filter }}
-      ref: ${{ inputs.ref }}
-      ecr-tag: ${{ needs.build-image.outputs.ecr-tag }}
-      test-file-filter: test_uv
-      mutate: true
-      timeout-minutes: 60
+      timeout-minutes: 120
 
   # --- Cleanup: stop host (deployment stays in S3 for auditability) ---
 
@@ -307,11 +289,8 @@ jobs:
     name: "Cleanup: stop host"
     needs:
       - test-non-mutating
-      - test-external-volumes
-      - test-config-apply
       - test-gpu
-      - test-pixi
-      - test-uv
+      - test-mutating
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10

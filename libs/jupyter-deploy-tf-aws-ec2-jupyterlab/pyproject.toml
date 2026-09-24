@@ -1,6 +1,6 @@
 [project]
 name = "jupyter-deploy-tf-aws-ec2-jupyterlab"
-version = "0.1.0rc2"
+version = "0.1.0"
 description = "Terraform template to deploy a single-user JupyterLab on an AWS EC2 instance, accessed via a local proxy with AWS-identity auth."
 readme = "README.md"
 authors = [
@@ -15,6 +15,7 @@ dependencies = [
     "boto3-stubs",
     "mypy-boto3-ec2",
     "mypy-boto3-ecr",
+    "mypy-boto3-efs",
     "mypy-boto3-eks",
     "mypy-boto3-elbv2",
     "mypy-boto3-inspector2",
@@ -102,6 +103,7 @@ testpaths = [
 markers = [
     "e2e: End-to-end tests using playwright (deselect with '-m \"not e2e\"')",
     "cli: Non-mutating CLI tests for release validation (select with '-m cli')",
+    "gpu: Mutating tests that provision a GPU instance (deselect with '-m \"not gpu\"')",
 ]
 
 [tool.coverage.run]

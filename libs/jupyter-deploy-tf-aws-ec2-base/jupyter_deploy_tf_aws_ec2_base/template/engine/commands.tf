@@ -64,6 +64,10 @@ parameters:
   users:
     type: String
     description: "The user names (comma-separated) to add, remove or set in the allowlist."
+    # Constrain to comma-separated bare GitHub logins. This value is substituted into a root shell
+    # by aws:runShellScript, so no whitespace or shell metacharacters (`;`, `$`, backticks, `&`,
+    # `|`, newlines). GitHub logins are [A-Za-z0-9-]; comma is the list separator.
+    allowedPattern: "^[a-zA-Z0-9,-]*$"
   action:
     type: String
     description: "The type of action to perform."
@@ -87,6 +91,10 @@ parameters:
   teams:
     type: String
     description: "The team names (comma-separated) to add, remove or set in the allowlist"
+    # Constrain to comma-separated bare GitHub team slugs. This value is substituted into a root
+    # shell by aws:runShellScript, so no whitespace or shell metacharacters (`;`, `$`, backticks,
+    # `&`, `|`, newlines). Team slugs are [A-Za-z0-9-_.]; comma is the list separator.
+    allowedPattern: "^[a-zA-Z0-9,._-]*$"
   action:
     type: String
     description: "The type of action to perform."
@@ -109,6 +117,9 @@ parameters:
   organization:
     type: String
     description: "The name of the GitHub organization to allowlist."
+    # Same reasoning as the users/teams documents: substituted into a root shell, so restrict to
+    # a bare GitHub org login ([A-Za-z0-9-]). Single-valued, so no comma.
+    allowedPattern: "^[a-zA-Z0-9-]*$"
 mainSteps:
   - action: aws:runShellScript
     name: SetAllowlistedOrganization
@@ -172,6 +183,11 @@ parameters:
     type: String
     description: "The additional parameters to pass to docker logs."
     default: "-n 100"
+    # Substituted into a root shell, and `EXTRA="{{extra}}"` is double-quoted, so `$(...)` and
+    # backticks would still expand. Restricted to what a docker-logs flag actually needs:
+    # letters, digits, space, `-`, `.`, `:`, `=` covers `-n 100`, `--tail 5`, `--since 10m` and
+    # `--since=2026-01-01T00:00:00`. No `;`, `$`, backtick, `&`, `|`, quote, or newline.
+    allowedPattern: "^[a-zA-Z0-9 .:=-]*$"
 mainSteps:
   - action: aws:runShellScript
     name: Logs

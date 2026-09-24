@@ -276,3 +276,35 @@ def test_main_tf_version_matches_template_version() -> None:
     assert match.group(1) == template_version, (
         f"main.tf template_version ({match.group(1)}) does not match manifest version ({template_version})"
     )
+
+
+def test_platform_layers_gated_by_platform_barrier() -> None:
+    """Every helm_release declared in a platform_*.tf MUST be reachable from
+    null_resource.platform.depends_on.
+
+    That barrier is what every service release orders itself against, so on destroy the
+    whole platform outlives them (see platform.tf). A platform layer left out of it can
+    be torn down while the services that sit on it are still uninstalling — e.g. losing
+    Karpenter early takes the nodes with it, so the operator dies mid-uninstall and the
+    workspace CR finalizers never clear.
+    Reachability may be transitive (helm_release.karpenter arrives via
+    helm_release.karpenter_nodepools).
+    """
+    engine_dir = TEMPLATE_PATH / "engine"
+    platform_releases = {
+        f"helm_release.{rname}"
+        for tf_file in sorted(engine_dir.glob("platform_*.tf"))
+        for rtype, rname, _ in _iter_resource_blocks(tf_file.read_text())
+        if rtype == "helm_release"
+    }
+    assert platform_releases, "no helm_release found in engine/platform_*.tf"
+
+    graph, _ = _build_depends_on_graph()
+    assert "null_resource.platform" in graph, "null_resource.platform not found in engine/*.tf"
+
+    missing = sorted(r for r in platform_releases if not _reaches(graph, "null_resource.platform", frozenset({r})))
+    assert not missing, (
+        f"platform layer(s) {missing} are not reachable from null_resource.platform.depends_on — "
+        "they can be destroyed while the service releases that depend on them are still "
+        "uninstalling. Add them to the aggregator in platform.tf."
+    )

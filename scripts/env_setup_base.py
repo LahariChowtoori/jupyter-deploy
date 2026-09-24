@@ -44,6 +44,9 @@ PROJECT_VAR_MAP = {
     "domain": "JD_E2E_VAR_DOMAIN",
     "subdomain": "JD_E2E_VAR_SUBDOMAIN",
     "letsencrypt_email": "JD_E2E_VAR_EMAIL",
+    # The zone test_volume_swaps.py pins the deployment back to. Read from the project rather than
+    # supplied, so "the base zone" cannot disagree with the zone the deployment is actually in.
+    "availability_zone": "JD_E2E_AVAILABILITY_ZONE",
     # Auth variables (org, teams, usernames) are intentionally omitted —
     # they're reset to clean defaults in step 1b to avoid reading stale
     # state left by a previous failed test run.
@@ -69,8 +72,9 @@ OPTION_MAP = {
     "safe-team": "JD_E2E_SAFE_TEAM",
     "larger-instance": "JD_E2E_LARGER_INSTANCE",
     "larger-log-retention-days": "JD_E2E_LARGER_LOG_RETENTION_DAYS",
-    "cpu-instance": "JD_E2E_CPU_INSTANCE",
     "gpu-instance": "JD_E2E_GPU_INSTANCE",
+    "availability-zone": "JD_E2E_AVAILABILITY_ZONE",
+    "alt-availability-zone": "JD_E2E_ALT_AVAILABILITY_ZONE",
 }
 
 

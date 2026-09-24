@@ -8,6 +8,7 @@ from jupyter_deploy.engine.vardefs import TemplateVariableDefinition
 from jupyter_deploy.enum import SecretSource, StoreType
 from jupyter_deploy.exceptions import InvalidPresetError, SecretNotFoundError
 from jupyter_deploy.handlers.base_project_handler import BaseProjectHandler, write_store_config
+from jupyter_deploy.handlers.resource.volume_handler import VolumeHandler
 from jupyter_deploy.manifest import JupyterDeploySecretV1
 from jupyter_deploy.provider.manifest_command_runner import ManifestCommandRunner
 from jupyter_deploy.provider.resolved_clidefs import ResolvedCliParameter, StrResolvedCliParameter
@@ -266,6 +267,60 @@ class ConfigHandler(BaseProjectHandler):
         # Write all restored values to variables.yaml
         self._handler.variables_handler.sync_project_variables_config(restored_values)
         self.display_manager.success(f"Restored {len(restored_values)} secret(s).")
+
+    def restore_volumes(self) -> None:
+        """Resolve each managed volume's latest backup into the variable the template declares for it.
+
+        Runs before the plan so terraform creates every volume from its backup instead of empty. This
+        is what makes a zone change non-destructive: moving zones replaces the volumes
+        (volumes cannot cross zones), and the backup is what carries the data across.
+
+        Reads backups and writes one local variable, so `jd config` stays free of cloud side effects;
+        creating the backups is the separate, explicit `jd volume backup`.
+
+        Validates before writing anything. Pointing the variable at a backup REPLACES the volume on the
+        next apply -- `snapshot_id` forces replacement -- so this path is destructive whether or not
+        anything else about the configuration changed, and it succeeds silently when the backup is old:
+        terraform recreates the volume from it, reports success, and the work done since is gone. The
+        check is only meaningful here, before the variable is written.
+
+        Scoped to this flag on purpose, and nothing else covers the gap: a user who changes a zone
+        WITHOUT asking for a restore gets no check at all, and the volumes are replaced empty. That is a
+        known gap, stated in the `availability_zone` variable description, and accepted rather than
+        paid for by giving every `jd config` a provider call.
+
+        Raises:
+            BackupsNotReadyError: If the backups cannot be shown to hold the volumes' current contents,
+                or if any managed volume has no backup. Restoring only some volumes would recreate the
+                rest empty, which is the data loss this path exists to prevent.
+            IncompatibleHostStateError: If the host is not stopped, so quiescence cannot be established.
+            KeyError: If the template declares no variable by that name, raised by the record write
+                before the project is touched.
+        """
+        volume_handler = VolumeHandler(display_manager=self.display_manager)
+        volume_handler.validate_backups_ready()
+        backups_map_value, backup_ids = volume_handler.resolve_backup_ids()
+        # The volumes declaration names a values: entry; that entry names the template's variable.
+        variable_name = self.project_manifest.get_declared_value(backups_map_value).source_key
+
+        # Both writes, in this order, matching `ManifestCommandRunner.update_variables` -- the write-back
+        # every `updates:`-declaring command goes through. `update_variable_records` is not redundant with
+        # the config sync: it validates the value against the variable's DECLARED type before anything is
+        # written, so a malformed map is refused here rather than surfacing later as a plan error with no
+        # obvious cause.
+        varvalues = {variable_name: backup_ids}
+        self._handler.variables_handler.update_variable_records(varvalues)
+        self._handler.variables_handler.sync_project_variables_config(varvalues)
+        self.display_manager.success(f"Resolved {len(backup_ids)} volume backup(s) into '{variable_name}'.")
+        # The quiescence proof is established HERE, but the volumes are replaced at `jd up`. Starting the
+        # host in between reopens the window this command just closed, and the apply would then restore a
+        # backup the app has run since -- which succeeds silently. Re-validating at `jd up` was considered
+        # and rejected: it would make the apply re-plan, conflating `jd config` and `jd up`. So the
+        # constraint is named instead of enforced.
+        self.display_manager.hint(
+            "Keep the host stopped until 'jd up' completes: starting it invalidates these backups, "
+            "and the restore would silently lose whatever the app writes in the meantime."
+        )
 
     @staticmethod
     def _resolve_secret_id(secret_def: JupyterDeploySecretV1, outputs_handler: EngineOutputsHandler) -> str:

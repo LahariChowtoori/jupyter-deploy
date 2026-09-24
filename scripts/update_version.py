@@ -29,6 +29,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from version_edit import set_toml_version
+
 REPO_ROOT = Path(__file__).parent.parent
 
 # canonical pyproject.toml whose version is the source of truth for each target
@@ -74,23 +76,6 @@ def compute_bumped_version(current: str, bump: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
-def set_pyproject_version(file_path: Path, new_version: str) -> None:
-    """Update only the project version line, preserving formatting."""
-    content = file_path.read_text()
-    updated = re.sub(
-        r'^(version\s*=\s*)["\'][^"\']+["\']',
-        rf'\g<1>"{new_version}"',
-        content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if content == updated:
-        print(f"! Warning: no version line updated in {file_path}")
-    else:
-        file_path.write_text(updated)
-        print(f"✓ Updated version in {file_path.relative_to(REPO_ROOT)}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bump the version of a release target.")
     parser.add_argument("target", choices=sorted(TARGET_PYPROJECT))
@@ -117,10 +102,10 @@ def main() -> None:
         )
     elif args.target == "cli":
         # root and CLI versions move in lockstep
-        set_pyproject_version(REPO_ROOT / "pyproject.toml", new_version)
-        set_pyproject_version(TARGET_PYPROJECT["cli"], new_version)
+        set_toml_version(REPO_ROOT / "pyproject.toml", new_version)
+        set_toml_version(TARGET_PYPROJECT["cli"], new_version)
     else:  # plugin | proxy — single-file bump
-        set_pyproject_version(TARGET_PYPROJECT[args.target], new_version)
+        set_toml_version(TARGET_PYPROJECT[args.target], new_version)
 
     print("\nRun `uv lock` to update the lockfile (the just recipe does this).")
 

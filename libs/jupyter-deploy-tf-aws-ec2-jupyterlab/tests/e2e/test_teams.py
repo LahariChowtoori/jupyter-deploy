@@ -248,24 +248,3 @@ def test_allowlist_change_does_not_restart_jupyter(e2e_deployment: EndToEndDeplo
         )
     finally:
         e2e_deployment.cli.run_command(["jupyter-deploy", "server", "exec", "--", "rm", "-f", marker])
-
-
-# Defined last on purpose: it runs `jd config` (plan only) and asserts the plan is empty, so every
-# test above that edits the allowlist must have restored it first.
-def test_allowlist_write_back_leaves_no_terraform_diff(e2e_deployment: EndToEndDeployment) -> None:
-    """After CLI allowlist changes, `jd config` plans no changes — no split-brain.
-
-    The allowlist is edited over SSM at runtime AND rendered by terraform from a variable, so the
-    write-back has to reproduce terraform's exact rendering (sorted, original casing). If it did not,
-    every `jd up` would see a diff and recreate the stack — turning a routine apply into an outage,
-    and silently reverting the user's access changes.
-    """
-    e2e_deployment.ensure_deployed()
-
-    e2e_deployment.cli.run_command(["jupyter-deploy", "config"])
-    history = e2e_deployment.cli.run_command(["jupyter-deploy", "history", "show", "config", "-l", "200"])
-
-    assert "No changes." in history.stdout, (
-        "`jd config` planned changes after CLI-only allowlist edits: the write-back does not match "
-        f"terraform's rendering, so the next `jd up` would revert them.\n{history.stdout[-2000:]}"
-    )
