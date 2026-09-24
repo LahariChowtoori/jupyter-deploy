@@ -55,7 +55,6 @@ jd --help
 - [jupyter-deploy-tf-aws-ec2-base](./libs/jupyter-deploy-tf-aws-ec2-base/README.md): A template to deploy a single JupyterLab app to an EC2 instance, serve it on your own domain and control access with GitHub identities.
 - [jupyter-deploy-tf-aws-ec2-jupyterlab](./libs/jupyter-deploy-tf-aws-ec2-jupyterlab/README.md): A template to deploy a single-user JupyterLab app to an EC2 instance, reached through the local client proxy and gated by your AWS identity.
 - [jupyter-deploy-tf-aws-eks-oidc](./libs/jupyter-deploy-tf-aws-eks-oidc/README.md): A template for multi-tenant JupyterLab or other interactive apps to an AWS EKS cluster, serve them on your own domain and control access with GitHub identities.
-- [jupyter-deploy-tf-aws-ec2-jupyterlab](./libs/jupyter-deploy-tf-aws-ec2-jupyterlab/README.md): A template to deploy a single-user JupyterLab app to an EC2 instance, accessed through a local proxy and authorized by your AWS identity; no domain or OAuth app required.
 - [jupyter-infra-tf-aws-iam-ci](./libs/jupyter-infra-tf-aws-iam-ci/README.md): The template to configure the AWS resources for the CI.
 - [pytest-jupyter-deploy](./libs/pytest-jupyter-deploy/README.md): The pytest plugin for E2E tests that integrates with Playwright.
 
