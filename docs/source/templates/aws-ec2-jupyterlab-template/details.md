@@ -6,6 +6,14 @@ The template places the EC2 instance in the default VPC of the selected AWS regi
 `availability_zone` variable to place the instance in a specific zone, for example when the chosen
 instance type has no capacity in the default zone.
 
+```{warning}
+Changing `availability_zone` on an existing deployment replaces every EBS volume and destroys
+their data: EBS volumes cannot cross zones, so terraform must recreate them. There is no
+plan-time guard. To relocate an existing deployment safely, back up the volumes first with
+`jd volume backup --all`, then run `jd config --restore-volumes --availability-zone <zone>`
+so each volume is recreated from its backup.
+```
+
 There is no Elastic IP and no DNS record: the client proxy resolves the instance's current public
 IP live at connection time and pins the instance's certificate, not its address.
 
@@ -118,7 +126,7 @@ The template provides one variable preset:
 | region | `string` | `us-west-2` | The AWS region where to create the resources |
 | jupyter_package_manager | `string` | `uv` | The package manager for Jupyter: `uv` (faster, native Python) or `pixi` (conda-forge, supports non-Python dependencies) |
 | instance_type | `string` | `t3.medium` | The type of instance to start |
-| availability_zone | `string` | `any` | The availability zone for the instance and its EBS volumes; `any` accepts the first subnet of the default VPC |
+| availability_zone | `string` | `any` | The availability zone for the instance and its EBS volumes; `any` accepts the first subnet of the default VPC. Changing this on an existing deployment replaces the EBS volumes (see the Networking warning) |
 | ami_id | `string` | `null` | The ID of the AMI to use for the instance; leave empty for the latest AL2023 |
 | min_root_volume_size_gb | `number` | `30` | The minimum size in gigabytes of the root EBS volume for the EC2 instance (will use AMI snapshot size if larger) |
 | volume_size_gb | `number` | `30` | The size in GB of the EBS volume the Jupyter Server has access to |
