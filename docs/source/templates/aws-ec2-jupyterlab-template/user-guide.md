@@ -126,6 +126,11 @@ jd host connect
 exit
 ```
 
+The interactive `jd host connect` and `jd server connect` commands open an AWS SSM session and
+require the [AWS Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+installed locally. It is not needed for `jd up`, `jd open`, `jd proxy`, or the
+`jd server logs` / `jd server exec` commands.
+
 ## Take down all the infrastructure
 
 This operation removes all the resources associated with this project in your AWS account.

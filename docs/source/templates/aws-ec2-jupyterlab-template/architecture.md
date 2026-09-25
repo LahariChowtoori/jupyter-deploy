@@ -9,6 +9,8 @@ certificate, and injects a short-lived AWS-identity (STS) token as a request hea
 pin is on the certificate rather than the address, a new public IP after an instance stop/start
 does not break the connection.
 
+![Proxy and authentication flow](diagrams/proxy-flow.svg)
+
 ## Certificate pinning
 
 The instance generates a long-lived self-signed TLS certificate at first boot and persists the
@@ -34,8 +36,11 @@ The application runs as a set of containerized services orchestrated by Docker C
 certificate and delegates authentication decisions to the auth sidecar via the
 [ForwardAuth](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/)
 middleware. The auth sidecar is a small Go service that validates the AWS-identity token. Traefik
-forwards authenticated requests to the **JupyterLab** container. A **Fluent Bit** sidecar collects
-service logs, and a log-rotator container manages log retention on disk.
+forwards authenticated requests to the **JupyterLab** container and compresses the responses
+(except server-sent event streams, which **JupyterLab** uses for live updates). A **Fluent Bit**
+sidecar collects service logs, and a log-rotator container manages log retention on disk.
+
+![Containers](diagrams/containers.svg)
 
 ## Network boundary
 

@@ -51,28 +51,38 @@ The template creates an IAM role for the EC2 instance with permissions for SSM, 
 deployment S3 bucket, write access to the certificate-pin SSM parameter, and (optionally) EFS
 access.
 
+Beyond the permissions terraform needs to create the resources at deploy time, the local
+credentials you use day-to-day need:
+
+- `ec2:DescribeInstances`: resolve the instance's current public IP (there is no Elastic IP)
+- `ssm:GetParameter`: read the published self-signed certificate (the TLS pin) from SSM Parameter Store
+- `ec2:StartInstances` / `ec2:StopInstances`: only for `jd host start` and `jd host stop`
+
+Minting the AWS-identity token is a local presign that makes no API call, so it needs no extra IAM
+permission.
+
 The template creates no secrets: authentication relies on short-lived AWS-identity tokens minted
 locally, so there is no OAuth client secret or certificate secret to store.
 
 ## Deployment Configuration
 
-An S3 bucket stores all deployment configuration files: bash scripts, Docker service definitions,
+An S3 bucket stores the deployment configuration files: bash scripts, Docker service definitions,
 and application configuration. The instance pulls these files during setup or updates via an SSM
-startup document.
+startup document. The EC2 instance configuration scripts `cloudinit.sh.tftpl` and
+`cloudinit-volumes.sh.tftpl` (optional EBS/EFS volume mounts) stay embedded in the SSM document.
 
 | File | Purpose |
 |---|---|
-| `cloudinit.sh.tftpl` | EC2 instance configuration |
-| `cloudinit-volumes.sh.tftpl` | Optional EBS/EFS volume mounts |
 | `docker-compose.yml.tftpl` | Docker service definitions |
 | `docker-startup.sh` | Docker service startup |
 | `generate-cert.sh.tftpl` | Self-signed certificate generation and cert-pin publication |
 | `traefik.yml` | Traefik static configuration |
-| `traefik-dynamic.yml` | Traefik dynamic configuration (routers, ForwardAuth middleware, TLS) |
+| `traefik-dynamic.yml` | Traefik dynamic configuration (routers, ForwardAuth and compression middleware, TLS) |
 | `dockerfile.jupyter` | Jupyter container image |
 | `jupyter-start.sh` | Jupyter container entrypoint |
 | `jupyter-reset.sh` | Fallback if Jupyter fails to start |
 | `pyproject.jupyter.toml` | Python dependencies for the Jupyter environment |
+| `pyproject.kernel.toml` | Python dependencies for an additional Jupyter kernel |
 | `jupyter_server_config.py` | Jupyter server settings |
 | `auth-sidecar/` | Go sources and Dockerfile for the AWS-identity token validator |
 | `dockerfile.logrotator` | Log rotation sidecar container |
@@ -128,7 +138,7 @@ The template provides one variable preset:
 | instance_type | `string` | `t3.medium` | The type of instance to start |
 | availability_zone | `string` | `any` | The availability zone for the instance and its EBS volumes; `any` accepts the first subnet of the default VPC. Changing this on an existing deployment replaces the EBS volumes (see the Networking warning) |
 | ami_id | `string` | `null` | The ID of the AMI to use for the instance; leave empty for the latest AL2023 |
-| min_root_volume_size_gb | `number` | `30` | The minimum size in gigabytes of the root EBS volume for the EC2 instance (will use AMI snapshot size if larger) |
+| min_root_volume_size_gb | `number` | `30` | The minimum size in gigabytes of the root EBS volume for the EC2 instance (will use the AMI snapshot size plus a buffer of 33% or 10 GB, whichever is greater, if that is larger) |
 | volume_size_gb | `number` | `30` | The size in GB of the EBS volume the Jupyter Server has access to |
 | volume_type | `string` | `gp3` | The type of EBS volume the Jupyter Server has access to |
 | iam_role_prefix | `string` | `Jupyter-deploy-jupyterlab` | The prefix for the name of the IAM role for the instance |
@@ -141,6 +151,7 @@ The template provides one variable preset:
 | custom_tags | `map(string)` | `{}` | The custom tags to add to all the resources |
 | additional_ebs_mounts | `list(map(string))` | `[]` | Elastic block stores to mount on the notebook home directory |
 | additional_efs_mounts | `list(map(string))` | `[]` | Elastic file systems to mount on the notebook home directory |
+| ebs_snapshot_ids | `map(string)` | `{}` | Map of volume name to the EBS snapshot id to create that volume from |
 
 ## Outputs
 
@@ -166,3 +177,7 @@ The template provides one variable preset:
 | `auth_teams_update_document` | Name of the SSM document to update the allowlisted IAM role names |
 | `auth_check_document` | Name of the SSM document to read the allowlisted IAM principal names |
 | `persisting_resources` | List of identifiers of resources that should not be destroyed |
+| `availability_zone` | Availability zone the instance and its EBS volumes are placed in |
+| `jupyter_data_volume_id` | ID of the EBS volume mounted on the notebook home directory |
+| `additional_ebs_volumes` | JSON-encoded inventory of the configured additional EBS mounts, consumed by `jd volume` |
+| `additional_efs_volumes` | JSON-encoded inventory of the configured additional EFS mounts, consumed by `jd volume` |

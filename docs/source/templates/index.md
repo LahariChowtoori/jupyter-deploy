@@ -31,7 +31,7 @@ See the [**AWS Base Template**](aws-base-template/index) for full documentation.
 ```{toctree}
 :maxdepth: 1
 
+AWS EC2 JupyterLab Template <aws-ec2-jupyterlab-template/index>
 AWS Base Template <aws-base-template/index>
 AWS EKS OIDC Template <aws-eks-oidc-template/index>
-AWS EC2 JupyterLab Template <aws-ec2-jupyterlab-template/index>
 ```
