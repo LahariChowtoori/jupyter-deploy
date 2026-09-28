@@ -2,14 +2,14 @@
 
 ## Data path
 
+![Proxy and authentication flow](diagrams/proxy-flow.svg)
+
 The browser never talks to the instance directly. It talks plain HTTP to a local client proxy
 bound to a loopback address on your laptop. The proxy forwards each request to the instance's
 Traefik on port 443 over TLS, verifying the connection against the instance's pinned self-signed
 certificate, and injects a short-lived AWS-identity (STS) token as a request header. Because the
 pin is on the certificate rather than the address, a new public IP after an instance stop/start
 does not break the connection.
-
-![Proxy and authentication flow](diagrams/proxy-flow.svg)
 
 ## Certificate pinning
 

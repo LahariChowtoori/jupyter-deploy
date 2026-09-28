@@ -178,14 +178,14 @@ jd down
 
 ### Data path
 
+![Proxy and authentication flow](https://raw.githubusercontent.com/jupyter-infra/jupyter-deploy/main/docs/source/templates/aws-ec2-jupyterlab-template/diagrams/proxy-flow.svg)
+
 The browser never talks to the instance directly. It talks plain HTTP to a local client proxy
 bound to a loopback address on your laptop. The proxy forwards each request to the instance's
 Traefik on port 443 over TLS, verifying the connection against the instance's pinned self-signed
 certificate, and injects a short-lived AWS-identity (STS) token as a request header. Because the
 pin is on the certificate rather than the address, a new public IP after an instance stop/start
 does not break the connection.
-
-![Proxy and authentication flow](https://raw.githubusercontent.com/jupyter-infra/jupyter-deploy/main/docs/source/templates/aws-ec2-jupyterlab-template/diagrams/proxy-flow.svg)
 
 ### Certificate pinning
 
@@ -276,16 +276,6 @@ the connection. No certificate authority, domain validation, or renewal is invol
 The template creates an IAM role for the EC2 instance with permissions for SSM, read access to the
 deployment S3 bucket, write access to the certificate-pin SSM parameter, and (optionally) EFS
 access.
-
-Beyond the permissions terraform needs to create the resources at deploy time, the local
-credentials you use day-to-day need:
-
-- `ec2:DescribeInstances`: resolve the instance's current public IP (there is no Elastic IP)
-- `ssm:GetParameter`: read the published self-signed certificate (the TLS pin) from SSM Parameter Store
-- `ec2:StartInstances` / `ec2:StopInstances`: only for `jd host start` and `jd host stop`
-
-Minting the AWS-identity token is a local presign that makes no API call, so it needs no extra IAM
-permission.
 
 The template creates no secrets: authentication relies on short-lived AWS-identity tokens minted
 locally, so there is no OAuth client secret or certificate secret to store.
@@ -410,4 +400,4 @@ The template provides one variable preset:
 
 ## License
 
-MIT License. See [LICENSE](./LICENSE).
+The **AWS EC2 JupyterLab Template** is licensed under the [MIT License](https://github.com/jupyter-infra/jupyter-deploy/blob/main/libs/jupyter-deploy-tf-aws-ec2-jupyterlab/LICENSE).

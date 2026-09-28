@@ -51,16 +51,6 @@ The template creates an IAM role for the EC2 instance with permissions for SSM, 
 deployment S3 bucket, write access to the certificate-pin SSM parameter, and (optionally) EFS
 access.
 
-Beyond the permissions terraform needs to create the resources at deploy time, the local
-credentials you use day-to-day need:
-
-- `ec2:DescribeInstances`: resolve the instance's current public IP (there is no Elastic IP)
-- `ssm:GetParameter`: read the published self-signed certificate (the TLS pin) from SSM Parameter Store
-- `ec2:StartInstances` / `ec2:StopInstances`: only for `jd host start` and `jd host stop`
-
-Minting the AWS-identity token is a local presign that makes no API call, so it needs no extra IAM
-permission.
-
 The template creates no secrets: authentication relies on short-lived AWS-identity tokens minted
 locally, so there is no OAuth client secret or certificate secret to store.
 
