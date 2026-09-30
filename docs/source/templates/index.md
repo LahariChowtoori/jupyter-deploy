@@ -10,9 +10,12 @@ them to help you choose.
 
 ## Official Templates
 
+Each official template adds a layer of capability on top of the one before it: start with the
+simplest template that fits your needs, and move up as they grow.
+
 | | [AWS EC2 JupyterLab Template](aws-ec2-jupyterlab-template/index) | [AWS Base Template](aws-base-template/index) | [AWS EKS OIDC Template](aws-eks-oidc-template/index) |
 |---|---|---|---|
-| **Use case** | Personal notebook, no domain setup | Personal or small-team notebook | Team or organization workspace platform |
+| **Use case** | Move your JupyterLab to the cloud for more compute, storage, memory or GPUs | Everything in the EC2 JupyterLab template, plus collaborating with others online | Run your organization's own internal notebook platform |
 | **Architecture** | Single EC2 instance | Single EC2 instance | EKS cluster with managed node groups |
 | **Users** | Single user, single app | Small team collaborating on a single app | Multi-user with isolated workspaces |
 | **Identity** | AWS IAM (via local proxy) | GitHub OAuth (direct) | GitHub OAuth via Dex (OIDC) |
