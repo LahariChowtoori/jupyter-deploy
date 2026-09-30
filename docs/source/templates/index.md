@@ -11,7 +11,7 @@ them to help you choose.
 ## Official Templates
 
 Each official template adds a layer of capability on top of the one before it: start with the
-simplest template that fits your needs, and move up as they grow.
+simplest template that fits your needs.
 
 | | [AWS EC2 JupyterLab Template](aws-ec2-jupyterlab-template/index) | [AWS Base Template](aws-base-template/index) | [AWS EKS OIDC Template](aws-eks-oidc-template/index) |
 |---|---|---|---|
