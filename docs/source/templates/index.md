@@ -13,7 +13,7 @@ them to help you choose.
 | | [AWS EC2 JupyterLab Template](aws-ec2-jupyterlab-template/index) | [AWS Base Template](aws-base-template/index) | [AWS EKS OIDC Template](aws-eks-oidc-template/index) |
 |---|---|---|---|
 | **Architecture** | Single EC2 instance | Single EC2 instance | EKS cluster with managed node groups |
-| **Users** | Single user | Single user | Multi-user with isolated workspaces |
+| **Users** | Single user, single app | Small team collaborating on a single app | Multi-user with isolated workspaces |
 | **Identity** | AWS IAM (via local proxy) | GitHub OAuth (direct) | GitHub OAuth via Dex (OIDC) |
 | **Prerequisites** | AWS credentials only | Domain + GitHub OAuth app | Domain + GitHub OAuth app |
 | **Access** | Local proxy, pinned TLS | Public URL on your domain | Public URL on your domain |
