@@ -12,7 +12,7 @@ extensions = [
     "sphinx_copybutton",
 ]
 myst_enable_extensions = ["colon_fence"]
-myst_heading_anchors = 3
+myst_heading_anchors = 4
 
 templates_path = ["_templates"]
 exclude_patterns = []
