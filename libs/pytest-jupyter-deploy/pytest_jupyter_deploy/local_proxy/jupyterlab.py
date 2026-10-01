@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 
 import requests
 import websocket
@@ -73,7 +73,7 @@ def delete_kernel(base_url: str, kernel_id: str, timeout_seconds: int = 30) -> N
 
 
 @contextlib.contextmanager
-def kernel_websocket(base_url: str, timeout_seconds: int = 30) -> Iterator[websocket.WebSocket]:
+def kernel_websocket(base_url: str, timeout_seconds: int = 30) -> Generator[websocket.WebSocket]:
     """Start a kernel through ``base_url`` and yield its connected channels websocket.
 
     ``base_url`` is an origin the app is served at (e.g. the proxy's ``http://127.0.0.1:<port>``).

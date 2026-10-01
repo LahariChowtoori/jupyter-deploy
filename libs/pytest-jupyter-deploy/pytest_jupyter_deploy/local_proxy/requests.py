@@ -27,7 +27,7 @@ import ssl
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
 # The console script the CLI's [proxy] extra installs.
@@ -131,7 +131,7 @@ def cert_fingerprint(cert_pem: str) -> str:
 
 
 @contextlib.contextmanager
-def static_bundle_proxy(bundle: dict, startup_timeout_seconds: int = 20) -> Iterator[str]:
+def static_bundle_proxy(bundle: dict, startup_timeout_seconds: int = 20) -> Generator[str]:
     """Run a client proxy against a fixed ``bundle`` and yield its loopback origin.
 
     For asserting how the proxy *relays* an upstream answer, rather than what the upstream decides.

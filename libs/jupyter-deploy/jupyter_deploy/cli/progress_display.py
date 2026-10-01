@@ -4,7 +4,7 @@ This module provides the ProgressDisplayManager class that implements
 the DisplayManager protocol for Rich-based terminal display.
 """
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -284,7 +284,7 @@ class ProgressDisplayManager:
             self._live.update(self._get_display_panel())
 
     @contextmanager
-    def spinner(self, initial_message: str) -> Iterator[Any]:
+    def spinner(self, initial_message: str) -> Generator[Any]:
         """Simple spinner context (no progress bar).
 
         Args:

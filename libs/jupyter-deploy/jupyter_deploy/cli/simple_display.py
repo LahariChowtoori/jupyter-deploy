@@ -5,7 +5,7 @@ the DisplayManager protocol with lightweight display (spinner, info, warnings, s
 No progress bars or complex UI elements.
 """
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -99,7 +99,7 @@ class SimpleDisplayManager:
         self.console.print()
 
     @contextmanager
-    def spinner(self, initial_message: str) -> Iterator[Any]:
+    def spinner(self, initial_message: str) -> Generator[Any]:
         """Simple spinner for operations.
 
         Shows spinner and sets context so info() updates it in place.

@@ -2,7 +2,7 @@
 
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from pytest_jupyter_deploy.suite_config import SuiteConfig
 
 
 @contextmanager
-def undeployed_project(suite_config: SuiteConfig) -> Iterator[tuple[Path, JDCli]]:
+def undeployed_project(suite_config: SuiteConfig) -> Generator[tuple[Path, JDCli]]:
     """Create a temporary undeployed project for testing.
 
     This context manager:

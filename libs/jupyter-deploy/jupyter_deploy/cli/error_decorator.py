@@ -35,6 +35,7 @@ from jupyter_deploy.exceptions import (
     InvalidStoreTypeError,
     InvalidTemplateNameError,
     InvalidVariablesDotYamlError,
+    InvalidVariableTypeError,
     JupyterDeployError,
     LogCleanupError,
     LogNotFoundError,
@@ -189,8 +190,9 @@ def handle_cli_errors(console: Console) -> Generator[None, None, None]:
     except ProxyNotInstalledError as e:
         console.print(f":x: {e}", style="bold red", highlight=False)
         console.line()
+        # Name the extra, not an install command: the environment may be uv, pip or conda.
         # escape(): "[proxy]" would otherwise be parsed as Rich markup.
-        console.print(f":bulb: Install the proxy extra: [bold cyan]{escape("pip install 'jupyter-deploy[proxy]'")}[/]")
+        console.print(f":bulb: Install the proxy extra: [bold cyan]{escape('jupyter-deploy[proxy]')}[/]")
         raise typer.Exit(code=1) from None
 
     except NoProxyFoundError as e:
@@ -304,7 +306,8 @@ def handle_cli_errors(console: Console) -> Generator[None, None, None]:
         else:
             console.print("No template is installed.")
         if e.suggested_package:
-            console.print(f":bulb: To install it, run: [bold cyan]uv add {e.suggested_package}[/]")
+            # Name the package, not an install command: the environment may be uv, pip or conda.
+            console.print(f":bulb: To use it, install the package [bold cyan]{e.suggested_package}[/]")
         if e.installed:
             console.print(
                 ":bulb: To default to a template you have, run: "
@@ -424,6 +427,14 @@ def handle_cli_errors(console: Console) -> Generator[None, None, None]:
     except (VariableNotFoundError, OutputNotFoundError) as e:
         console.print(f":x: {e}", style="bold red", highlight=False)
         # check if next steps provided, if so print them
+        raise typer.Exit(code=1) from None
+
+    except InvalidVariableTypeError as e:
+        console.print(f":x: {e}", style="bold red", highlight=False)
+        for detail in e.details:
+            console.print(detail, style="red", highlight=False)
+        console.line()
+        console.print(":bulb: Fix the value in variables.yaml, then run [bold cyan]jd config[/] again.")
         raise typer.Exit(code=1) from None
 
     except ProjectOutputsNotAvailableError as e:

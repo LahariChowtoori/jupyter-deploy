@@ -18,23 +18,31 @@ _HELP_COMMANDS: list[list[str]] = [
     ["jd", "teams", "--help"],
     ["jd", "organization", "--help"],
     ["jd", "server", "--help"],
+    ["jd", "image", "--help"],
     ["jd", "component", "--help"],
     ["jd", "host", "--help"],
     ["jd", "cluster", "--help"],
+    ["jd", "pool", "--help"],
+    ["jd", "volume", "--help"],
     ["jd", "history", "--help"],
     ["jd", "projects", "--help"],
+    ["jd", "proxy", "--help"],
+    ["jd", "preferences", "--help"],
 ]
 
 
-_SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+# accepts a release (0.8.0) as well as a PEP 440 pre-release (0.8.0rc1)
+_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$")
 
 
 @pytest.mark.parametrize("flag", ["--version", "-V"])
 def test_version(flag: str) -> None:
-    """jd --version / -V prints a semver string and exits 0."""
+    """jd --version / -V prints a version string and exits 0."""
     result = subprocess.run(["jd", flag], capture_output=True, text=True)
     assert result.returncode == 0, f"jd {flag} failed: {result.stderr}"
-    assert _SEMVER_PATTERN.match(result.stdout.strip()), f"Expected <major>.<minor>.<patch>, got: {result.stdout!r}"
+    assert _VERSION_PATTERN.match(result.stdout.strip()), (
+        f"Expected <major>.<minor>.<patch>[rcN], got: {result.stdout!r}"
+    )
 
 
 @pytest.mark.parametrize("cmd", _HELP_COMMANDS, ids=[" ".join(c) for c in _HELP_COMMANDS])

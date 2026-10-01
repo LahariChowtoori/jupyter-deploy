@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -25,7 +25,7 @@ _WRITE = "jupyter_deploy.handlers.preferences_handler.write_preferences"
 
 
 @contextmanager
-def _preferences_home(tmp_dir: str, create: bool = True) -> Iterator[Path]:
+def _preferences_home(tmp_dir: str, create: bool = True) -> Generator[Path]:
     """Point the preferences file at a temporary home, and yield the directory it lands in.
 
     The preferences file lives under the real home directory, which no test may touch, and the
