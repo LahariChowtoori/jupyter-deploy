@@ -24,6 +24,7 @@ optionally to commit to version control:
 ├── manifest.yaml       # Template metadata and provider commands
 ├── variables.yaml      # Variable definitions and configuration presets
 ├── AGENT.md            # Template-specific instructions for AI assistants
+├── TROUBLESHOOT.md     # How to investigate and resolve common issues
 ├── .gitignore
 ├── engine/             # Infrastructure-as-code files (e.g., Terraform .tf files)
 └── services/           # Application service definitions and configurations

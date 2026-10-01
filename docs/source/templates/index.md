@@ -25,10 +25,15 @@ simplest template that fits your needs.
 
 ## The Default Template
 
-If you do not specify a template when running `jd init PROJECT-DIR`, `jupyter-deploy` defaults to the **AWS Base Template**.
+If you do not specify a template when running `jd init PROJECT-DIR`, `jupyter-deploy` defaults to
+the **AWS EC2 JupyterLab Template**. Before v0.8.0, the default was the **AWS Base Template**.
 
+To set a different default, run `jd preferences set --default-template <TEMPLATE>`, for example
+`jd preferences set --default-template aws:ec2:base`. See
+[`jd preferences`](../reference/setup/preferences) for details.
 
-See the [**AWS Base Template**](aws-base-template/index) for full documentation.
+See the [**AWS EC2 JupyterLab Template**](aws-ec2-jupyterlab-template/index) for full documentation.
+
 ## What's next
 
 ```{toctree}

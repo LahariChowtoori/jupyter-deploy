@@ -17,15 +17,15 @@ uv init . --bare
 uv venv
 source .venv/bin/activate
 
-# install jupyter-deploy and the base template
-uv add "jupyter-deploy[aws]"
-uv add jupyter-deploy-tf-aws-ec2-base
+# install jupyter-deploy and the default template
+uv add "jupyter-deploy[aws,proxy]"
+uv add jupyter-deploy-tf-aws-ec2-jupyterlab
 ```
 
 Or with `pip`:
 ```bash
-pip install "jupyter-deploy[aws]"
-pip install jupyter-deploy-tf-aws-ec2-base
+pip install "jupyter-deploy[aws,proxy]"
+pip install jupyter-deploy-tf-aws-ec2-jupyterlab
 ```
 
 Verify installation:
@@ -38,10 +38,19 @@ jd --install-completion
 
 ## Quick Start
 
-### Prerequisite for the AWS Base Template
-- An AWS account with appropriate permissions
-- A DNS domain registered with Amazon Route53 on this AWS account
-- A GitHub OAuth app 
+### Prerequisites for the default template
+
+The default template is the [**AWS EC2 JupyterLab Template**](../templates/aws-ec2-jupyterlab-template/index).
+It needs only:
+- An AWS account, with local credentials for an IAM role or IAM user
+- `terraform`, the AWS CLI and `jq` installed locally; `jupyter-deploy` checks for these tools and
+  points you to the installation instructions for anything missing
+
+```{note}
+Before v0.8.0, the default template was the [**AWS Base Template**](../templates/aws-base-template/index).
+To keep using it as your default, run `jd preferences set --default-template aws:ec2:base`.
+See [`jd preferences`](../reference/setup/preferences) for details.
+```
 
 ### 1. Initialize a new project
 
@@ -53,10 +62,11 @@ jd init .
 `jupyter-deploy` will scaffold your project in your local directory. You'll see something like:
 
 ```
-my-project/
+my-first-deployment/
 ├── manifest.yaml       # Declares template metadata and provider commands
 ├── variables.yaml      # Variable definitions and configuration presets
 ├── AGENT.md            # Template-specific instructions for AI assistants
+├── TROUBLESHOOT.md     # How to investigate and resolve common issues
 ├── .gitignore
 ├── engine/             # Infrastructure-as-code files (e.g., Terraform .tf files)
 └── services/           # Application service definitions and configurations
@@ -66,16 +76,14 @@ my-project/
 
 The next step is to configure your project by setting the values of the variables.
 
-`jupyter-deploy` will prompt you to install the tools the **AWS Base Template** requires.
-
 ```bash
 jd config
 ```
 
-The interactive configuration walks you through setting deployment variables
-such as region, instance type, and authentication settings.
-
-Alternatively, you can set variables values directly in the `variables.yaml` file.
+The default template has no required variables, so `jd config` uses the template defaults
+without prompting. To change a default such as the region or instance type, pass it as a flag
+(for example `jd config --instance-type t3.large`) or edit the `overrides:` section of the
+`variables.yaml` file.
 
 You can view details about all variables with:
 ```bash
@@ -93,13 +101,21 @@ jd show -v <VARIABLE-NAME> --description
 jd up
 ```
 
-`jupyter-deploy` creates the resources in your AWS account using `terraform`, 
-and serves your **JupyterLab** application to a URL in your domain.
+`jupyter-deploy` creates the resources in your AWS account using `terraform`.
+
+### 4. Open your application
+
+```bash
+jd open
+```
+
+`jd open` starts a local proxy that connects your browser to your own **JupyterLab** app
+running on a dedicated EC2 instance in your AWS account.
 
 ## What's Next
 
 - Explore the [**AWS EC2 JupyterLab Template**](../templates/aws-ec2-jupyterlab-template/index) for single-user deployments with AWS credentials as the only prerequisite
-- Explore the [**AWS Base Template**](../templates/aws-base-template/index) for single-instance deployments
+- Explore the [**AWS Base Template**](../templates/aws-base-template/index) for multi-user **JupyterLab** served on your own domain
 - Explore the [**AWS EKS OIDC Template**](../templates/aws-eks-oidc-template/index) for multi-user workspace platforms
 - Learn about the [**CLI Reference**](../reference/overview) available
 - Read the [**Contributor Guide**](../contributor-guide/index) to get involved
