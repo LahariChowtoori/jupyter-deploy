@@ -1,0 +1,218 @@
+# AWS EC2 JupyterLab Template — Infrastructure
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  box: {
+    shape: rectangle
+    width: 240
+    height: 140
+    style: {
+      bold: true
+      stroke-width: 3
+      font-size: 20
+    }
+  }
+
+  red_flow: {
+    style: {
+      font-size: 20
+      stroke: "#c62828"
+      stroke-width: 3
+    }
+  }
+
+  blue_flow: {
+    style: {
+      font-size: 20
+      stroke: "#1565c0"
+      stroke-width: 3
+    }
+  }
+
+  gray_flow: {
+    style: {
+      font-size: 20
+      stroke: "#616161"
+      stroke-width: 3
+      stroke-dash: 5
+    }
+  }
+}
+
+direction: right
+
+aws: "AWS Account" {
+  style: {
+    fill: "#fff3e0"
+    stroke: "#e65100"
+    stroke-width: 3
+    bold: true
+    font-size: 20
+  }
+
+  region: "Region (e.g. us-west-2)" {
+    grid-columns: 2
+    horizontal-gap: 140
+    style: {
+      fill: "#fef9e7"
+      stroke: "#e65100"
+      stroke-width: 2
+      stroke-dash: 5
+      bold: true
+      font-size: 20
+    }
+
+    vpc: "Default VPC" {
+      style: {
+        fill: "#e8f5e9"
+        stroke: "#2e7d32"
+        stroke-width: 3
+        bold: true
+        font-size: 20
+      }
+
+      igw: "Internet Gateway" {
+        class: box
+        icon: ../shared/icons/internet-gateway.svg
+        style: {
+          fill: "#c8e6c9"
+          stroke: "#388e3c"
+        }
+      }
+
+      az: "Availability Zone (one)" {
+        style: {
+          fill: "#f1f8e9"
+          stroke: "#2e7d32"
+          stroke-width: 2
+          stroke-dash: 5
+          bold: true
+          font-size: 20
+        }
+
+        subnet: "Default subnet (one)" {
+          grid-columns: 1
+          grid-gap: 40
+          style: {
+            fill: "#e3f2fd"
+            stroke: "#1565c0"
+            stroke-width: 3
+            bold: true
+            font-size: 20
+          }
+
+          sg: "Security group (inbound :443)" {
+            style: {
+              fill: "#bbdefb"
+              stroke: "#c62828"
+              stroke-width: 2
+              stroke-dash: 3
+              bold: true
+              font-size: 20
+            }
+
+            ec2: "EC2 Instance" {
+              class: box
+              icon: ../shared/icons/ec2.svg
+              style: {
+                fill: "#fff3e0"
+                stroke: "#e65100"
+              }
+            }
+          }
+
+          volumes: "" {
+            grid-columns: 2
+            grid-gap: 40
+            style: {
+              fill: "#e3f2fd"
+              stroke-width: 0
+            }
+
+            root_volume: "EBS root volume" {
+              class: box
+              icon: ../shared/icons/ebs.svg
+              style: {
+                fill: "#e8f5e9"
+                stroke: "#2e7d32"
+              }
+            }
+
+            data_volume: "EBS data volume" {
+              class: box
+              icon: ../shared/icons/ebs.svg
+              style: {
+                fill: "#e8f5e9"
+                stroke: "#2e7d32"
+              }
+            }
+          }
+        }
+      }
+    }
+
+    services: "Regional services" {
+      grid-columns: 1
+      style: {
+        fill: transparent
+        stroke: transparent
+        stroke-width: 2
+        stroke-dash: 0
+        bold: true
+        font-size: 20
+      }
+
+      sts: "AWS STS" {
+        class: box
+        icon: ../shared/icons/iam.svg
+        style: {
+          fill: "#fce4ec"
+          stroke: "#c62828"
+        }
+      }
+
+      ssm: "AWS Systems Manager" {
+        class: box
+        icon: ../shared/icons/ssm.svg
+        style: {
+          fill: "#fce4ec"
+          stroke: "#c62828"
+        }
+      }
+
+      s3: "S3 Bucket" {
+        class: box
+        icon: ../shared/icons/s3.svg
+        style: {
+          fill: "#e8f5e9"
+          stroke: "#2e7d32"
+        }
+      }
+    }
+  }
+}
+
+# Flows
+aws.region.vpc.igw -> aws.region.vpc.az.subnet.sg.ec2: "HTTPS :443" {
+  class: blue_flow
+}
+
+aws.region.vpc.az.subnet.sg.ec2 -> aws.region.services.sts: "" {
+  target-arrowhead.label: "verify identity"
+  class: red_flow
+}
+
+aws.region.vpc.az.subnet.sg.ec2 -> aws.region.services.ssm: "" {
+  target-arrowhead.label: "SSM agent"
+  class: red_flow
+}
+
+aws.region.vpc.az.subnet.sg.ec2 -> aws.region.services.s3: "" {
+  target-arrowhead.label: "config files"
+  class: gray_flow
+}

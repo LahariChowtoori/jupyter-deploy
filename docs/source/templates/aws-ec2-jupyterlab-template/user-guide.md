@@ -37,8 +37,10 @@ jd config
 jd up
 ```
 
-The interactive configuration walks you through the deployment variables such as region, instance
-type, and volume size. No domain or OAuth settings are needed.
+The template has no required variables, so `jd config` does not prompt for anything and the
+deployment uses the template defaults. To change a default such as the region, instance type, or
+volume size, pass it as a flag (for example `jd config --instance-type t3.large`) or edit the
+`overrides:` section of `variables.yaml`. Run `jd config --help` to list every variable.
 
 ## Access your JupyterLab application
 
