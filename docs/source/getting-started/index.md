@@ -49,7 +49,7 @@ It needs only:
 ```{note}
 Before v0.8.0, the default template was the [**AWS Base Template**](../templates/aws-base-template/index).
 To keep using it as your default, run `jd preferences set --default-template aws:ec2:base`.
-See [`jd preferences`](../reference/setup/preferences) for details.
+See [`jd preferences`](../concepts/preferences) for details.
 ```
 
 ### 1. Initialize a new project

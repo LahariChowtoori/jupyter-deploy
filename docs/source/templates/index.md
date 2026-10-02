@@ -30,7 +30,7 @@ the **AWS EC2 JupyterLab Template**. Before v0.8.0, the default was the **AWS Ba
 
 To set a different default, run `jd preferences set --default-template <TEMPLATE>`, for example
 `jd preferences set --default-template aws:ec2:base`. See
-[`jd preferences`](../reference/setup/preferences) for details.
+[`jd preferences`](../concepts/preferences) for details.
 
 See the [**AWS EC2 JupyterLab Template**](aws-ec2-jupyterlab-template/index) for full documentation.
 

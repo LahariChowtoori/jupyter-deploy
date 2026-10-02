@@ -76,5 +76,5 @@ jd init <PROJECT-DIR> --template aws:eks:oidc
 Before v0.8.0, the default template was the **AWS Base Template** (`aws:ec2:base`). To change
 your default, run `jd preferences set --default-template <TEMPLATE>`, for example
 `jd preferences set --default-template aws:ec2:base`. See
-[`jd preferences`](../reference/setup/preferences) for details.
+[`jd preferences`](preferences) for details.
 ```
