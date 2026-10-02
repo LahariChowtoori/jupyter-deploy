@@ -21,3 +21,7 @@ These icons are used in architecture diagrams for documentation purposes.
 | `eks.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |
 | `ec2.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |
 | `iam.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |
+| `ebs.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |
+| `s3.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |
+| `ssm.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |
+| `internet-gateway.svg` | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) via [weibeld/aws-icons-svg](https://github.com/weibeld/aws-icons-svg) | AWS Trademark, permitted for architecture diagrams |

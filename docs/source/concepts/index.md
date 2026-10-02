@@ -68,5 +68,7 @@ engines
 providers
 application-images
 store
+proxy
+preferences
 ```
 

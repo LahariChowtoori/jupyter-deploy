@@ -72,8 +72,10 @@ jd config
 jd up
 ```
 
-The interactive configuration walks you through the deployment variables such as region, instance
-type, and volume size. No domain or OAuth settings are needed.
+The template has no required variables, so `jd config` does not prompt for anything and the
+deployment uses the template defaults. To change a default such as the region, instance type, or
+volume size, pass it as a flag (for example `jd config --instance-type t3.large`) or edit the
+`overrides:` section of `variables.yaml`. Run `jd config --help` to list every variable.
 
 ### Access your JupyterLab application
 
@@ -176,6 +178,39 @@ jd down
 
 ## Architecture
 
+### Infrastructure
+
+The template keeps the AWS footprint minimal to keep costs low: there is no load balancer, no
+Elastic IP, and no Route 53 hosted zone or DNS record. It provisions the following:
+
+- **VPC**: The default VPC of the selected region, reached from the internet through the VPC's
+  internet gateway.
+- **Subnet and availability zone**: The EC2 instance and its EBS volumes are placed in one
+  availability zone, in one subnet. EBS volumes cannot cross zones, so they always live in the
+  instance's zone.
+- **EC2 instance**: Runs the containerized application. It has a public IPv4 address that may
+  change across stop/start cycles; its security group allows inbound traffic on port 443 only.
+- **EBS volumes**: A root volume and a data volume mounted at `/home/jovyan` that persists user
+  data and the TLS private key.
+- **Regional services**: AWS STS validates the AWS-identity tokens, AWS Systems Manager (SSM) runs
+  administrator commands and stores the pinned certificate, and an S3 bucket holds the deployment
+  configuration files.
+
+![Infrastructure](https://raw.githubusercontent.com/jupyter-infra/jupyter-deploy/main/docs/source/templates/aws-ec2-jupyterlab-template/diagrams/infrastructure.svg)
+
+### Containers
+
+The application runs as a set of containerized services orchestrated by Docker Compose.
+[Traefik](https://doc.traefik.io/traefik/) terminates TLS on port 443 with the self-signed
+certificate and delegates authentication decisions to the auth sidecar via the
+[ForwardAuth](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/)
+middleware. The auth sidecar is a small Go service that validates the AWS-identity token. Traefik
+forwards authenticated requests to the **JupyterLab** container and compresses the responses
+(except server-sent event streams, which **JupyterLab** uses for live updates). A **Fluent Bit**
+sidecar collects service logs, and a log-rotator container manages log retention on disk.
+
+![Containers](https://raw.githubusercontent.com/jupyter-infra/jupyter-deploy/main/docs/source/templates/aws-ec2-jupyterlab-template/diagrams/containers.svg)
+
 ### Data path
 
 The browser never talks to the instance directly. It talks plain HTTP to a local client proxy
@@ -202,19 +237,6 @@ AWS STS, checking the deployment binding (the `x-k8s-aws-id` header), verifying 
 and matching the returned IAM identity against the allowlist of role and user names. Requests with
 a valid token from an allowlisted identity reach **JupyterLab**; everything else is rejected. No
 shared secret is stored anywhere.
-
-### Containers
-
-The application runs as a set of containerized services orchestrated by Docker Compose.
-[Traefik](https://doc.traefik.io/traefik/) terminates TLS on port 443 with the self-signed
-certificate and delegates authentication decisions to the auth sidecar via the
-[ForwardAuth](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/)
-middleware. The auth sidecar is a small Go service that validates the AWS-identity token. Traefik
-forwards authenticated requests to the **JupyterLab** container and compresses the responses
-(except server-sent event streams, which **JupyterLab** uses for live updates). A **Fluent Bit**
-sidecar collects service logs, and a log-rotator container manages log retention on disk.
-
-![Containers](https://raw.githubusercontent.com/jupyter-infra/jupyter-deploy/main/docs/source/templates/aws-ec2-jupyterlab-template/diagrams/containers.svg)
 
 ### Network boundary
 
