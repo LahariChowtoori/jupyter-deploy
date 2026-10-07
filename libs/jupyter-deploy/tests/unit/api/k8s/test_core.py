@@ -58,7 +58,7 @@ class TestListNodes(unittest.TestCase):
         self.assertEqual(nodes[0].name, "node-1")
         self.assertEqual(nodes[0].status, NodeConditionStatus.READY)
         self.assertIsNone(next_token)
-        mock_api.list_node.assert_called_once_with()
+        mock_api.list_node.assert_called_once_with(label_selector=None, limit=None, _continue=None)
 
     def test_returns_not_ready_status(self) -> None:
         mock_api: Mock = Mock(spec=CoreV1Api)
@@ -74,7 +74,7 @@ class TestListNodes(unittest.TestCase):
 
         list_nodes(mock_api, label_selector="role=worker")
 
-        mock_api.list_node.assert_called_once_with(label_selector="role=worker")
+        mock_api.list_node.assert_called_once_with(label_selector="role=worker", limit=None, _continue=None)
 
     def test_passes_limit_and_continue(self) -> None:
         mock_api: Mock = Mock(spec=CoreV1Api)
@@ -83,7 +83,7 @@ class TestListNodes(unittest.TestCase):
         _, next_token = list_nodes(mock_api, limit=1, _continue="start-abc")
 
         self.assertEqual(next_token, "next-abc")
-        mock_api.list_node.assert_called_once_with(limit=1, _continue="start-abc")
+        mock_api.list_node.assert_called_once_with(label_selector=None, limit=1, _continue="start-abc")
 
     def test_returns_unknown_when_no_conditions(self) -> None:
         mock_api: Mock = Mock(spec=CoreV1Api)
@@ -137,7 +137,9 @@ class TestListPods(unittest.TestCase):
         self.assertEqual(pods[0].name, "pod-1")
         self.assertEqual(pods[0].phase, PodPhase.RUNNING)
         self.assertIsNone(next_token)
-        mock_api.list_namespaced_pod.assert_called_once_with(namespace="default")
+        mock_api.list_namespaced_pod.assert_called_once_with(
+            namespace="default", label_selector=None, limit=None, _continue=None
+        )
 
     def test_passes_label_selector(self) -> None:
         mock_api: Mock = Mock(spec=CoreV1Api)
@@ -145,7 +147,9 @@ class TestListPods(unittest.TestCase):
 
         list_pods(mock_api, namespace="default", label_selector="app=web")
 
-        mock_api.list_namespaced_pod.assert_called_once_with(namespace="default", label_selector="app=web")
+        mock_api.list_namespaced_pod.assert_called_once_with(
+            namespace="default", label_selector="app=web", limit=None, _continue=None
+        )
 
     def test_passes_limit_and_continue(self) -> None:
         mock_api: Mock = Mock(spec=CoreV1Api)
@@ -154,7 +158,9 @@ class TestListPods(unittest.TestCase):
         _, next_token = list_pods(mock_api, namespace="default", limit=1, _continue="start-xyz")
 
         self.assertEqual(next_token, "next-xyz")
-        mock_api.list_namespaced_pod.assert_called_once_with(namespace="default", limit=1, _continue="start-xyz")
+        mock_api.list_namespaced_pod.assert_called_once_with(
+            namespace="default", label_selector=None, limit=1, _continue="start-xyz"
+        )
 
     def test_returns_unknown_phase_for_unrecognized_value(self) -> None:
         mock_api: Mock = Mock(spec=CoreV1Api)

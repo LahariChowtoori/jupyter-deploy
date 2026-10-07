@@ -17,6 +17,13 @@ class CustomObjectResult:
     resource: dict[str, Any]
 
 
+def _as_dict(result: object) -> dict[str, Any]:
+    """Narrow a custom objects API result to a dict; kubernetes v37 types it as object."""
+    if not isinstance(result, dict):
+        raise TypeError(f"Expected a dict from the custom objects API, got {type(result).__name__}")
+    return result
+
+
 def list_namespaced(
     api: CustomObjectsApi,
     ref: CustomResourceRef,
@@ -36,7 +43,7 @@ def list_namespaced(
     if _continue:
         kwargs["_continue"] = _continue
 
-    result = api.list_namespaced_custom_object(**kwargs)
+    result = _as_dict(api.list_namespaced_custom_object(**kwargs))
     items: list[dict[str, Any]] = result.get("items", [])
     next_token: str | None = result.get("metadata", {}).get("continue") or None
     return items, next_token
@@ -59,7 +66,7 @@ def list_cluster(
     if _continue:
         kwargs["_continue"] = _continue
 
-    result = api.list_cluster_custom_object(**kwargs)
+    result = _as_dict(api.list_cluster_custom_object(**kwargs))
     items: list[dict[str, Any]] = result.get("items", [])
     next_token: str | None = result.get("metadata", {}).get("continue") or None
     return items, next_token
@@ -67,12 +74,14 @@ def list_cluster(
 
 def get_namespaced(api: CustomObjectsApi, ref: CustomResourceRef, namespace: str, name: str) -> CustomObjectResult:
     """Call get namespaced custom object, return its name and full resource."""
-    result: dict[str, Any] = api.get_namespaced_custom_object(
-        group=ref.group,
-        version=ref.version,
-        namespace=namespace,
-        plural=ref.plural,
-        name=name,
+    result = _as_dict(
+        api.get_namespaced_custom_object(
+            group=ref.group,
+            version=ref.version,
+            namespace=namespace,
+            plural=ref.plural,
+            name=name,
+        )
     )
     obj_name: str = result.get("metadata", {}).get("name", "")
     return CustomObjectResult(name=obj_name, resource=result)
@@ -80,11 +89,13 @@ def get_namespaced(api: CustomObjectsApi, ref: CustomResourceRef, namespace: str
 
 def get_cluster(api: CustomObjectsApi, ref: CustomResourceRef, name: str) -> CustomObjectResult:
     """Call get cluster custom object, return its name and full resource."""
-    result: dict[str, Any] = api.get_cluster_custom_object(
-        group=ref.group,
-        version=ref.version,
-        plural=ref.plural,
-        name=name,
+    result = _as_dict(
+        api.get_cluster_custom_object(
+            group=ref.group,
+            version=ref.version,
+            plural=ref.plural,
+            name=name,
+        )
     )
     obj_name: str = result.get("metadata", {}).get("name", "")
     return CustomObjectResult(name=obj_name, resource=result)
@@ -94,13 +105,15 @@ def patch_namespaced(
     api: CustomObjectsApi, ref: CustomResourceRef, namespace: str, name: str, body: dict[str, Any]
 ) -> CustomObjectResult:
     """Call patch namespaced custom object, return its name and the updated resource."""
-    result: dict[str, Any] = api.patch_namespaced_custom_object(
-        group=ref.group,
-        version=ref.version,
-        namespace=namespace,
-        plural=ref.plural,
-        name=name,
-        body=body,
+    result = _as_dict(
+        api.patch_namespaced_custom_object(
+            group=ref.group,
+            version=ref.version,
+            namespace=namespace,
+            plural=ref.plural,
+            name=name,
+            body=body,
+        )
     )
     obj_name: str = result.get("metadata", {}).get("name", "")
     return CustomObjectResult(name=obj_name, resource=result)

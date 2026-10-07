@@ -1029,7 +1029,7 @@ requires-dist = [
     { name = "decorator", specifier = ">=5.2.1" },
     { name = "jupyter-core", specifier = ">=5.0.0" },
     { name = "jupyter-deploy-client-proxy", marker = "extra == 'proxy'", editable = "libs/jupyter-deploy-client-proxy" },
-    { name = "kubernetes", marker = "extra == 'k8s'", specifier = ">=31.0.0,<37" },
+    { name = "kubernetes", marker = "extra == 'k8s'", specifier = ">=31.0.0" },
     { name = "mypy-boto3-dynamodb", marker = "extra == 'aws'", specifier = ">=1.38.0" },
     { name = "mypy-boto3-ec2", marker = "extra == 'aws'", specifier = ">=1.40.4" },
     { name = "mypy-boto3-ecr", marker = "extra == 'aws'", specifier = ">=1.38.0" },
@@ -1345,7 +1345,7 @@ dev = [
 requires-dist = [
     { name = "boto3" },
     { name = "boto3-stubs" },
-    { name = "kubernetes", specifier = ">=31.0.0,<37" },
+    { name = "kubernetes", specifier = ">=31.0.0" },
     { name = "mypy-boto3-eks" },
     { name = "mypy-boto3-sts" },
 ]

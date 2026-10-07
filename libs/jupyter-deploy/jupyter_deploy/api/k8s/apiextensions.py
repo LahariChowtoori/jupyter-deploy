@@ -36,7 +36,7 @@ def _is_established(crd: V1CustomResourceDefinition) -> bool:
 def get_crd(api: ApiextensionsV1Api, name: str) -> CrdInfo:
     """Read a CustomResourceDefinition by name, return typed detail plus the full resource."""
     crd = api.read_custom_resource_definition(name=name)
-    crd_name = crd.metadata.name if crd.metadata else ""
+    crd_name = (crd.metadata.name or "") if crd.metadata else ""
     spec = crd.spec
     group = spec.group if spec else ""
     versions = spec.versions if spec and spec.versions else []
