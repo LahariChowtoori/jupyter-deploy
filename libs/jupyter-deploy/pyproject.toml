@@ -52,7 +52,7 @@ aws = [
     "mypy-boto3-secretsmanager>=1.38.0",
 ]
 k8s = [
-    "kubernetes>=31.0.0",
+    "kubernetes>=31.0.0,<37",
 ]
 # Local proxy for the aws:ec2:jupyterlab template. `jd` shells out to the
 # `jupyter-deploy-client-proxy` console script; it is never imported.

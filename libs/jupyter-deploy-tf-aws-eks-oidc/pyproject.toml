@@ -15,7 +15,7 @@ dependencies = [
     "boto3-stubs",
     "mypy-boto3-eks",
     "mypy-boto3-sts",
-    "kubernetes>=31.0.0",
+    "kubernetes>=31.0.0,<37",
 ]
 
 [project.license]
