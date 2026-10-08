@@ -141,7 +141,8 @@ exclude = [
     "tests/e2e/",
 ]
 
-# kubernetes package ships without py.typed and no maintained stubs exist (kubernetes-stubs stuck at v22)
+# kubernetes < 37 ships without py.typed and no maintained stubs exist (kubernetes-stubs stuck at v22);
+# v37+ is typed, so this override only applies to older supported versions
 [[tool.mypy.overrides]]
 module = "kubernetes.*"
 ignore_missing_imports = true

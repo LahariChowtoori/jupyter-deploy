@@ -76,7 +76,7 @@ def _is_available(conditions: list[dict[str, str]]) -> bool:
 def get_deployment_status(apps_api: AppsV1Api, name: str, namespace: str) -> DeploymentStatus:
     """Return replica counts and availability for a Deployment."""
     deployment = apps_api.read_namespaced_deployment(name=name, namespace=namespace)
-    deploy_name = deployment.metadata.name if deployment.metadata else ""
+    deploy_name = (deployment.metadata.name or "") if deployment.metadata else ""
     status = deployment.status
     ready = status.ready_replicas or 0 if status else 0
     total = status.replicas or 0 if status else 0
@@ -97,7 +97,7 @@ def get_daemonset_status(apps_api: AppsV1Api, name: str, namespace: str) -> Daem
     ready and available: desired == ready == available.
     """
     daemonset = apps_api.read_namespaced_daemon_set(name=name, namespace=namespace)
-    ds_name = daemonset.metadata.name if daemonset.metadata else ""
+    ds_name = (daemonset.metadata.name or "") if daemonset.metadata else ""
     status = daemonset.status
     desired = status.desired_number_scheduled or 0 if status else 0
     ready = status.number_ready or 0 if status else 0
@@ -118,7 +118,7 @@ def get_statefulset_status(apps_api: AppsV1Api, name: str, namespace: str) -> St
     A StatefulSet is Ready when all desired replicas are ready: replicas == readyReplicas.
     """
     statefulset = apps_api.read_namespaced_stateful_set(name=name, namespace=namespace)
-    sts_name = statefulset.metadata.name if statefulset.metadata else ""
+    sts_name = (statefulset.metadata.name or "") if statefulset.metadata else ""
     status = statefulset.status
     total = status.replicas or 0 if status else 0
     ready = status.ready_replicas or 0 if status else 0
@@ -135,7 +135,7 @@ def get_statefulset_status(apps_api: AppsV1Api, name: str, namespace: str) -> St
 def get_deployment(apps_api: AppsV1Api, name: str, namespace: str) -> DeploymentInfo:
     """Return detailed info including the full serialized resource."""
     deployment = apps_api.read_namespaced_deployment(name=name, namespace=namespace)
-    deploy_name = deployment.metadata.name if deployment.metadata else ""
+    deploy_name = (deployment.metadata.name or "") if deployment.metadata else ""
     spec = deployment.spec
     image = ""
     if spec and spec.template and spec.template.spec and spec.template.spec.containers:
@@ -158,7 +158,7 @@ def get_deployment(apps_api: AppsV1Api, name: str, namespace: str) -> Deployment
 def get_daemonset(apps_api: AppsV1Api, name: str, namespace: str) -> ResourceInfo:
     """Return the full serialized DaemonSet resource."""
     daemonset = apps_api.read_namespaced_daemon_set(name=name, namespace=namespace)
-    ds_name = daemonset.metadata.name if daemonset.metadata else ""
+    ds_name = (daemonset.metadata.name or "") if daemonset.metadata else ""
     resource: dict[str, Any] = apps_api.api_client.sanitize_for_serialization(daemonset)
     return ResourceInfo(name=ds_name, resource=resource)
 
@@ -166,7 +166,7 @@ def get_daemonset(apps_api: AppsV1Api, name: str, namespace: str) -> ResourceInf
 def get_statefulset(apps_api: AppsV1Api, name: str, namespace: str) -> ResourceInfo:
     """Return the full serialized StatefulSet resource."""
     statefulset = apps_api.read_namespaced_stateful_set(name=name, namespace=namespace)
-    sts_name = statefulset.metadata.name if statefulset.metadata else ""
+    sts_name = (statefulset.metadata.name or "") if statefulset.metadata else ""
     resource: dict[str, Any] = apps_api.api_client.sanitize_for_serialization(statefulset)
     return ResourceInfo(name=sts_name, resource=resource)
 
@@ -200,7 +200,7 @@ def get_deployment_oldest_pod(
         ),
     )
     oldest = pods.items[0]
-    pod_name = oldest.metadata.name if oldest.metadata else ""
+    pod_name = (oldest.metadata.name or "") if oldest.metadata else ""
     status = oldest.status
     phase = status.phase or "Unknown" if status else "Unknown"
     reason = ""

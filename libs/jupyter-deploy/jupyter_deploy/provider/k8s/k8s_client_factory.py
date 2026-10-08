@@ -41,6 +41,7 @@ class K8sClientFactory:
         def _refresh_token(cfg: client.Configuration) -> None:
             cfg.api_key["BearerToken"] = get_eks_bearer_token(binding_id=cluster_name, region=region)
 
-        configuration.refresh_api_key_hook = _refresh_token
+        # kubernetes v37 types refresh_api_key_hook as None, but the client still calls it when set
+        configuration.refresh_api_key_hook = _refresh_token  # type: ignore[assignment]
 
         return client.ApiClient(configuration=configuration)

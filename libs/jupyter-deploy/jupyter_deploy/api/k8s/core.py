@@ -58,19 +58,15 @@ def list_nodes(
     limit: int | None = None,
     _continue: str | None = None,
 ) -> tuple[list[NodeInfo], str | None]:
-    kwargs: dict[str, str | int] = {}
-    if label_selector:
-        kwargs["label_selector"] = label_selector
-    if limit:
-        kwargs["limit"] = limit
-    if _continue:
-        kwargs["_continue"] = _continue
-
-    node_list = api.list_node(**kwargs)
+    node_list = api.list_node(
+        label_selector=label_selector or None,
+        limit=limit or None,
+        _continue=_continue or None,
+    )
 
     nodes = []
     for node in node_list.items:
-        name = node.metadata.name if node.metadata else ""
+        name = (node.metadata.name or "") if node.metadata else ""
         nodes.append(NodeInfo(name=name, status=_parse_node_status(node)))
 
     next_token = node_list.metadata._continue if node_list.metadata else None
@@ -79,7 +75,7 @@ def list_nodes(
 
 def get_node(api: CoreV1Api, name: str) -> NodeInfo:
     node = api.read_node(name=name)
-    node_name = node.metadata.name if node.metadata else ""
+    node_name = (node.metadata.name or "") if node.metadata else ""
     resource: dict[str, Any] = ApiClient().sanitize_for_serialization(node)
     return NodeInfo(name=node_name, status=_parse_node_status(node), resource=resource)
 
@@ -91,19 +87,16 @@ def list_pods(
     limit: int | None = None,
     _continue: str | None = None,
 ) -> tuple[list[PodInfo], str | None]:
-    kwargs: dict[str, str | int] = {"namespace": namespace}
-    if label_selector:
-        kwargs["label_selector"] = label_selector
-    if limit:
-        kwargs["limit"] = limit
-    if _continue:
-        kwargs["_continue"] = _continue
-
-    pod_list = api.list_namespaced_pod(**kwargs)
+    pod_list = api.list_namespaced_pod(
+        namespace=namespace,
+        label_selector=label_selector or None,
+        limit=limit or None,
+        _continue=_continue or None,
+    )
 
     pods = []
     for pod in pod_list.items:
-        name = pod.metadata.name if pod.metadata else ""
+        name = (pod.metadata.name or "") if pod.metadata else ""
         pods.append(PodInfo(name=name, phase=_parse_pod_phase(pod)))
 
     next_token = pod_list.metadata._continue if pod_list.metadata else None
@@ -112,7 +105,7 @@ def list_pods(
 
 def get_pod(api: CoreV1Api, name: str, namespace: str) -> PodInfo:
     pod = api.read_namespaced_pod(name=name, namespace=namespace)
-    pod_name = pod.metadata.name if pod.metadata else ""
+    pod_name = (pod.metadata.name or "") if pod.metadata else ""
     return PodInfo(name=pod_name, phase=_parse_pod_phase(pod))
 
 
