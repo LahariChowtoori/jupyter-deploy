@@ -2,7 +2,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
-from kubernetes.client import BatchV1Api
+from kubernetes.client import BatchV1Api, V1JobSpec, V1PodTemplateSpec
 
 from jupyter_deploy.api.k8s.batch import (
     CronJobInfo,
@@ -26,7 +26,8 @@ def _mock_cronjob(
     cj.metadata.name = name
     cj.spec.schedule = schedule
     cj.spec.suspend = suspended
-    cj.spec.job_template.spec = Mock()
+    # kubernetes v37 validates V1Job fields, so the job spec must be a real model
+    cj.spec.job_template.spec = V1JobSpec(template=V1PodTemplateSpec())
     cj.spec.job_template.metadata = Mock()
     cj.spec.job_template.metadata.labels = {"app": name}
     cj.status.last_schedule_time = datetime(2025, 5, 14, 6, 0, 0, tzinfo=UTC)

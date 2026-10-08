@@ -36,7 +36,7 @@ def _format_time(dt: object | None) -> str:
 def get_cronjob_status(batch_api: BatchV1Api, name: str, namespace: str) -> CronJobStatus:
     """Read and parse the cronJob resource, return a Status object."""
     cj = batch_api.read_namespaced_cron_job(name=name, namespace=namespace)
-    cj_name = cj.metadata.name if cj.metadata else ""
+    cj_name = (cj.metadata.name or "") if cj.metadata else ""
     spec = cj.spec
     status = cj.status
     schedule = spec.schedule if spec else ""
@@ -55,7 +55,7 @@ def get_cronjob_status(batch_api: BatchV1Api, name: str, namespace: str) -> Cron
 def get_cronjob(batch_api: BatchV1Api, name: str, namespace: str) -> CronJobInfo:
     """Read and parse the cronJob resource, return a full serialized object."""
     cj = batch_api.read_namespaced_cron_job(name=name, namespace=namespace)
-    cj_name = cj.metadata.name if cj.metadata else ""
+    cj_name = (cj.metadata.name or "") if cj.metadata else ""
     spec = cj.spec
     status = cj.status
     schedule = spec.schedule if spec else ""
@@ -101,7 +101,7 @@ def get_last_job_result(batch_api: BatchV1Api, namespace: str, label_selector: s
     )
 
     latest = matching[0]
-    job_name = latest.metadata.name if latest.metadata else ""
+    job_name = (latest.metadata.name or "") if latest.metadata else ""
     status = latest.status
 
     if status and status.active and status.active > 0:
