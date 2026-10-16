@@ -246,17 +246,6 @@ The template provides two variable presets:
 - **`defaults-all.tfvars`** — comprehensive preset with all recommended values
 - **`defaults-base.tfvars`** — minimal preset that prompts for instance type and volume size
 
-## Requirements
-| Name | Version |
-|---|---|
-| terraform | >= 1.0 |
-| aws | >= 4.66 |
-
-## Providers
-| Name | Version |
-|---|---|
-| aws | >= 4.66 |
-
 ## Modules
 | Name | Location |
 |---|---|

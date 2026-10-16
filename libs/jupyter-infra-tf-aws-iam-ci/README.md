@@ -91,7 +91,6 @@ This project:
 ## Requirements
 | Name | Version |
 |---|---|
-| terraform | >= 1.0 |
 | aws | ~> 5.0 |
 
 ## Providers
