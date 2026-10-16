@@ -1,4 +1,7 @@
 terraform {
+  # 1.5+: the engine uses `check` blocks (main.tf, workspaces.tf, workspace_bedrock.tf).
+  required_version = ">= 1.5.7"
+
   required_providers {
     aws = {
       # 6.0+, not 5.0: the per-resource `region` attribute used by the ECR Public token below only
